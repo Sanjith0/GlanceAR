@@ -15,6 +15,7 @@ Checked on October 24, 2026, in a Linux environment using Node 24.22.1. This rec
 | Expo package compatibility | Passed | Installed dependencies match the selected Expo SDK |
 | Expo Apple autolinking | Passed | Both local native modules are discovered; this is not compilation |
 | Browser walkthrough | Passed | Real clicks in Chromium at mobile and desktop sizes |
+| Private hosted preview | Passed | Fresh-context consent-to-recap flow, all five font faces loaded, no failed requests or uncaught page errors |
 | Native Swift source checks | Passed within scope | Grammar, configuration, API-signature inspection and static contracts only |
 | Live Meta transcription | Passed within scope | Authenticated API call with an 18-second synthetic WAV |
 | Live Meta structured summary | Passed within scope | Actual ASR output summarized and accepted by the application validator |
@@ -58,6 +59,7 @@ The browser preview was exercised through its visible controls, not by directly 
 - **Navigation and layout:** Events, connections, profile, event detail, conversation and recap were exercised. The same page was resized between desktop and mobile; a 1440 × 600 short desktop window was also inspected.
 - **Visual evidence:** Home, recording, consent, both recap perspectives and short-window screenshots were inspected. No horizontal overflow, missing portraits or uncaught browser page errors were observed in these checks.
 - **Accessibility checks:** Decorative icon glyphs are hidden from accessibility output, tab labels have explicit names, disabled controls expose disabled semantics, and the measured home-screen text contrast ratios were at least 4.55:1. This is a focused check, not a complete accessibility audit.
+- **Hosted verification:** The final private deployment was reopened in a fresh browser context. Pairing, both consent gates, visible Stop, the sample finish gesture, identical recaps, deletion and the unconfigured-backend error were exercised again; all four Inter font faces and the icon font loaded without request failures.
 
 Scrollable pages deliberately extend below the viewport. The main recording Stop control is separate from that scrollable content.
 
