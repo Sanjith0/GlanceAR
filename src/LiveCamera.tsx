@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Platform, Pressable, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Platform, Pressable, Text, View, useWindowDimensions } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Badge, Button, Empty, Field, Icon, Notice, Page, Portrait } from './components';
 import { colors, s } from './theme';
@@ -10,53 +10,37 @@ import { cancelLiveCameraHandoff, prepareLiveCameraHandoff } from './capture/liv
 import { consistentSamples, faceDistance, matchDescriptor, MATCH_THRESHOLD, RecognitionTracker, scanProblem } from './face';
 import { talkingPoints } from './talkingPoints';
 import { DEMO_FACE_LIMIT, FACE_SCAN_SAMPLES, SIGHTING_REPORT_INTERVAL_MS } from './domain';
+import { RecognitionCountdown, type RecognitionCountdownView } from './recognitionCountdown';
+import { RecognitionScope } from './recognitionScope';
 
 type ScanTarget = { profileId?: string; name: string; role: string };
 type ScanRun = { target: ScanTarget; samples: number[][]; lastAt: number; startedAt: number; portrait?: string };
 const firstName = (name: string) => name.split(' ')[0];
+const emptyCountdown: RecognitionCountdownView = {
+  partnerId: null, secondsRemaining: null, progress: 0, completed: false,
+};
+const pageVisible = () => typeof document === 'undefined' || document.visibilityState === 'visible';
 
 export function LiveCameraScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const app = useGlance(), { busy, perform } = useOperation();
   const focused = useScreenFocused();
+  const { height } = useWindowDimensions();
   const { selectEvent } = app;
   useFocusEffect(useCallback(() => { selectEvent(id); }, [id, selectEvent]));
   const event = app.snapshot?.events.find(e => e.id === id);
   const selected = app.snapshot?.event?.id === id;
   const me = app.snapshot?.me;
   const enabled = selected && Boolean(app.snapshot?.eventPermission?.enabled);
-  const members = selected ? app.snapshot?.members ?? [] : [];
-  const people = new Map(members.map(p => [p.id, p]));
+  const members = useMemo(() => selected ? app.snapshot?.members ?? [] : [], [selected, app.snapshot?.members]);
+  const people = useMemo(() => new Map(members.map(p => [p.id, p])), [members]);
   const { directory, error: syncError } = useFaceDirectory(id);
-  const templates = directory?.templates ?? [];
+  const templates = useMemo(() => directory?.templates ?? [], [directory?.templates]);
   const active = app.snapshot?.conversations.find(c => c.eventId === id && c.consentMode === 'event' && ['consent', 'recording'].includes(c.status));
   const [notice, setNotice] = useState('');
 
-  // Move directly into the conversation, retaining only this stream for this exact
-  // destination. Audio ownership starts there and never remounts during finish/upload.
   const leaving = useRef(false);
   useFocusEffect(useCallback(() => { leaving.current = false; }, []));
-  useEffect(() => {
-    if (!focused || !active || leaving.current) return;
-    leaving.current = true;
-    const destination = `conversation:${active.id}`;
-    prepareLiveCameraHandoff(destination);
-    let cancelled = false, dispatched = false;
-    void Promise.resolve().then(() => {
-      if (cancelled) return;
-      router.replace(`/conversation/${active.id}`);
-      dispatched = true;
-    }).catch(error => {
-      cancelLiveCameraHandoff(destination);
-      leaving.current = false;
-      if (!cancelled) setNotice(error instanceof Error ? error.message : 'Could not open the conversation.');
-    });
-    return () => {
-      cancelled = true;
-      if (!dispatched) { cancelLiveCameraHandoff(destination); leaving.current = false; }
-    };
-  }, [focused, active]);
-
   const tracker = useRef(new RecognitionTracker());
   const reports = useRef(new Map<string, number>());
   const inFlight = useRef(new Set<string>());
@@ -66,29 +50,155 @@ export function LiveCameraScreen() {
   const [scanView, setScanView] = useState<{ name: string; count: number; hint: string } | null>(null);
   const [consented, setConsented] = useState(false);
   const [newPerson, setNewPerson] = useState<{ name: string; role: string } | null>(null);
+  const countdown = useRef(new RecognitionCountdown());
+  const scope = useRef(new RecognitionScope());
+  const mounted = useRef(true);
+  const attempt = useRef<number | null>(null);
+  const displayedCountdown = useRef(emptyCountdown);
+  const [countdownView, setCountdownView] = useState(emptyCountdown);
+  const [scopeGeneration, setScopeGeneration] = useState(0);
+  const [demoPairPending, setDemoPairPending] = useState(false);
+  const [authorizedConversation, setAuthorizedConversation] = useState<{ id: string; generation: number } | null>(null);
 
-  const report = (personId: string, now: number) => {
+  const publishCountdown = useCallback((next: RecognitionCountdownView) => {
+    displayedCountdown.current = next;
+    setCountdownView(previous => previous.partnerId === next.partnerId
+      && previous.secondsRemaining === next.secondsRemaining && previous.progress === next.progress
+      && previous.completed === next.completed ? previous : next);
+  }, []);
+
+  const clearCountdown = useCallback(() => {
+    countdown.current.reset();
+    attempt.current = null;
+    setScopeGeneration(scope.current.generation);
+    publishCountdown(emptyCountdown);
+    setDemoPairPending(false);
+    setAuthorizedConversation(null);
+    setOverlays([]);
+  }, [publishCountdown, setDemoPairPending, setAuthorizedConversation]);
+
+  const resetCountdown = useCallback(() => {
+    if (!mounted.current) return;
+    scope.current.invalidate(performance.now());
+    clearCountdown();
+  }, [clearCountdown]);
+
+  // Directory wrappers are new on each demo render, but scan arrays are immutable.
+  // Compare array identity inside the scope fence, not values or wrapper identity.
+  const scopeKey = JSON.stringify([
+    id, app.mode, me?.id, focused, enabled, app.captureSource,
+    directory?.enabled, directory?.scanned, directory?.model,
+    members.filter(person => person.glanceEnabled).map(person => person.id).sort(),
+    scanView ? 'scanning' : newPerson ? 'editing' : 'recognizing',
+  ]);
+  useLayoutEffect(() => {
+    if (scope.current.update(scopeKey, templates, performance.now())) clearCountdown();
+  }, [scopeKey, templates, clearCountdown]);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    const currentScope = scope.current, currentCountdown = countdown.current;
+    return () => {
+      mounted.current = false;
+      currentScope.invalidate(performance.now());
+      currentCountdown.reset();
+      attempt.current = null;
+    };
+  }, []);
+
+  // An unrelated active encounter must not carry an earlier partial hold through
+  // its lifetime. Our own synchronously submitted pair keeps its authorization.
+  const previousActive = useRef<string | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (previousActive.current === active?.id) return;
+    previousActive.current = active?.id;
+    if (attempt.current === null) resetCountdown();
+  }, [active?.id, resetCountdown]);
+
+  useEffect(() => {
+    if (app.mode !== 'demo' || !focused || !enabled) return;
+    const timer = setInterval(() => {
+      if (!mounted.current || attempt.current !== null) return;
+      const next = countdown.current.view(performance.now());
+      if (displayedCountdown.current.partnerId && !next.partnerId) setOverlays([]);
+      publishCountdown(next);
+    }, 100);
+    return () => clearInterval(timer);
+  }, [app.mode, focused, enabled, publishCountdown]);
+
+  const authorizedGeneration = authorizedConversation?.generation;
+  const targetConversationId = app.mode === 'live' ? active?.id
+    : authorizedConversation && authorizedGeneration === scopeGeneration && authorizedConversation.id === active?.id
+      ? authorizedConversation.id : undefined;
+  // Demo transitions need this hold's explicit authorization, not merely an
+  // existing active snapshot. Keep the exact stream alive until route replacement.
+  useEffect(() => {
+    if (!focused || !pageVisible() || !targetConversationId || leaving.current) return;
+    if (app.mode === 'demo' && !scope.current.isCurrent(authorizedGeneration!)) return;
+    const generation = scope.current.generation;
+    leaving.current = true;
+    const destination = `conversation:${targetConversationId}`;
+    prepareLiveCameraHandoff(destination);
+    let cancelled = false, dispatched = false;
+    void Promise.resolve().then(() => {
+      if (cancelled || !mounted.current || !pageVisible() || !scope.current.isCurrent(generation)) {
+        cancelLiveCameraHandoff(destination);
+        leaving.current = false;
+        return;
+      }
+      router.replace(`/conversation/${targetConversationId}`);
+      dispatched = true;
+    }).catch(error => {
+      cancelLiveCameraHandoff(destination);
+      leaving.current = false;
+      if (!cancelled && mounted.current) setNotice(error instanceof Error ? error.message : 'Could not open the conversation.');
+    });
+    return () => {
+      cancelled = true;
+      if (!dispatched) { cancelLiveCameraHandoff(destination); leaving.current = false; }
+    };
+  }, [focused, targetConversationId, app.mode, authorizedGeneration, scopeGeneration]);
+
+  const pairAfterHold = useCallback((partnerId: string) => {
+    if (attempt.current !== null || leaving.current || active || !focused || !enabled || !pageVisible()) return;
+    const generation = scope.current.generation;
+    attempt.current = generation; // Latch before a synchronous demo dispatch.
+    setDemoPairPending(true);
+    setNotice('');
+    void app.pair(id, partnerId).then(conversationId => {
+      if (!mounted.current || !scope.current.isCurrent(generation)
+        || attempt.current !== generation || !pageVisible()) return;
+      setAuthorizedConversation({ id: conversationId, generation });
+    }).catch(error => {
+      if (!mounted.current || !scope.current.isCurrent(generation) || attempt.current !== generation) return;
+      resetCountdown();
+      setNotice(error instanceof Error ? error.message : 'Could not start your conversation. Hold both faces in view to retry.');
+    });
+  }, [active, focused, enabled, app, id, resetCountdown]);
+
+  const report = useCallback((personId: string, now: number) => {
     if (inFlight.current.has(personId) || now - (reports.current.get(personId) ?? 0) < SIGHTING_REPORT_INTERVAL_MS) return;
     inFlight.current.add(personId);
     reports.current.set(personId, now);
     const name = firstName(people.get(personId)?.name ?? 'They');
     app.reportSighting(id, personId).then(result => setPairing(old => ({ ...old, [personId]:
-      result.status === 'waiting' ? `Waiting for ${name} to recognize you${app.mode === 'demo' ? ' (simulated in preview)' : ''}`
+      result.status === 'waiting' ? `Waiting for ${name} to recognize you`
         : result.status === 'busy' && !result.conversationId ? `${name} is in another conversation` : 'Starting your conversation…' })))
       .catch(error => setPairing(old => ({ ...old, [personId]: error instanceof Error ? error.message : 'Could not start a conversation.' })))
       .finally(() => inFlight.current.delete(personId));
-  };
+  }, [people, app, id]);
 
-  const stopScan = (message = '') => {
+  const stopScan = useCallback((message = '') => {
     scan.current = null;
+    resetCountdown();
     setScanView(null); setOverlays([]); setNotice(message);
-  };
-  const startScan = (target: ScanTarget) => {
+  }, [resetCountdown]);
+  const startScan = useCallback((target: ScanTarget) => {
+    resetCountdown();
     tracker.current.reset();
     scan.current = { target, samples: [], lastAt: 0, startedAt: Date.now() };
     setNotice(''); setScanView({ name: target.name, count: 0, hint: 'Look at the camera with only this person in frame.' });
-  };
-  const scanFrame = (frame: FaceFrame, now: number) => {
+  }, [resetCountdown]);
+  const scanFrame = useCallback((frame: FaceFrame, now: number) => {
     const run = scan.current!;
     const problem = scanProblem(frame.faces);
     setOverlays(frame.faces.map((face, i) => ({ key: `scan-${i}`, box: face.box, tone: 'scan',
@@ -124,9 +234,11 @@ export function LiveCameraScreen() {
       setNotice(`${firstName(target.name)}’s face scan is saved${app.mode === 'live'
         ? ' and synced to everyone with Glance on in this event.' : ' in this tab’s memory.'}`);
     });
-  };
+  }, [templates, people, stopScan, perform, app, id]);
 
-  const onFrame = (frame: FaceFrame) => {
+  const onFrame = useCallback((frame: FaceFrame) => {
+    if (!mounted.current || !focused || !enabled || !pageVisible()
+      || leaving.current || !scope.current.acceptsFrame(frame.sampledAt)) return;
     const now = Date.now();
     if (scan.current) { scanFrame(frame, now); return; }
     const results = frame.faces.map(face => ({ face, match: face.descriptor ? matchDescriptor(face.descriptor, templates) : null }));
@@ -142,12 +254,29 @@ export function LiveCameraScreen() {
       };
       return { key: `face-${i}`, box: face.box, tone: 'unknown', title: face.descriptor ? 'Not registered' : 'Move closer to recognize' };
     }));
-    if (active || leaving.current || (app.mode === 'live' && !directory?.scanned)) return;
+    if (active || leaving.current || newPerson) return;
+    if (app.mode === 'demo') {
+      if (attempt.current !== null) return;
+      // Preserve every detection, including unknown and duplicate faces. Filtering
+      // them out would let an extra face or two copies of one ID satisfy the hold.
+      const ids = results.map(({ match }) => {
+        const person = match ? people.get(match.profileId) : undefined;
+        return person?.glanceEnabled ? person.id : null;
+      });
+      const next = countdown.current.observe(ids, me?.id, performance.now(), frame.sampledAt);
+      publishCountdown(next);
+      if (next.completed && next.partnerId) pairAfterHold(next.partnerId);
+      return;
+    }
+    if (!directory?.scanned) return;
     for (const personId of stable) report(personId, now);
-  };
+  }, [focused, enabled, scanFrame, templates, me, people, event?.title, pairing, active, newPerson,
+    app.mode, directory?.scanned, publishCountdown, pairAfterHold, report]);
 
   const recognizable = templates.filter(t => t.profileId !== me?.id && people.has(t.profileId)).length;
   const cameraActive = focused && enabled && Platform.OS === 'web';
+  const counting = countdownView.secondsRemaining !== null;
+  const partnerName = firstName(people.get(countdownView.partnerId ?? '')?.name ?? 'your partner');
   return <Page back title="LIVE Camera">
     <DemoBanner /><GlobalStatus />
     {!event ? !app.loading && <Empty icon="calendar" title="Event unavailable" text="Go back to your events, or join with an invitation code." />
@@ -156,9 +285,61 @@ export function LiveCameraScreen() {
         <Text style={s.muted}>LIVE Camera only recognizes attendees who turned Glance on for this event, and only after you do too.</Text>
         <Button icon="arrow-left" onPress={() => router.canGoBack() ? router.back() : router.replace(`/event/${id}`)}>Back to the event</Button>
       </View> : <>
-        <View style={{ gap: 8 }}><Text style={s.title}>Who’s here?</Text>
-          <Text style={s.muted}>Point your camera at the room. People with a face scan get a box with their name and something to talk about. Once you recognize each other, your conversation starts.</Text></View>
-        <FaceCamera active={cameraActive} scopeId={`live:${id}`} overlays={overlays} onFrame={onFrame} />
+        <View style={{ gap: 12 }}><Text style={s.title}>Who’s here?</Text>
+          <Text style={s.muted}>{app.mode === 'demo'
+            ? 'Keep both registered faces in this camera for five seconds. If either leaves, the countdown restarts.'
+            : 'Point your camera at the room. People with a face scan get a box with their name and something to talk about. Once you recognize each other, your conversation starts.'}</Text>
+          {app.mode === 'demo' && <View testID="recognition-countdown"
+            accessibilityLiveRegion="polite"
+            style={[s.soft, { backgroundColor: counting || demoPairPending ? colors.blueLight : colors.canvas,
+              borderWidth: 1, borderColor: colors.line, gap: 12 }]}>
+            <View style={s.between}>
+              <View style={[s.grow, { gap: 3 }]}>
+                <Text style={[s.eyebrow, { fontSize: 10, letterSpacing: 1 }]}>SAME-CAMERA DEMO</Text>
+                <Text style={s.label}>{demoPairPending ? 'Starting your conversation…'
+                  : active ? 'A conversation is already open.'
+                    : counting ? 'Both recognized. Stay in frame.' : 'Waiting for both faces'}</Text>
+                <Text style={s.small}>{demoPairPending ? 'Keeping your camera live.'
+                  : active ? 'Resume it, or stop it before starting another.'
+                    : scanView ? 'Finish this scan, then bring both people into view.'
+                      : newPerson ? 'Finish adding this attendee before starting the hold.'
+                        : counting ? `You and ${partnerName}. Hold until the countdown finishes.`
+                          : !directory?.scanned ? 'Scan yourself and one other attendee below.'
+                            : recognizable === 0 ? 'Add another attendee’s face scan below.'
+                              : 'You + one registered attendee, visible together.'}</Text>
+              </View>
+              <View style={{ width: 48, height: 48, borderRadius: 24, alignItems: 'center',
+                justifyContent: 'center', backgroundColor: counting ? colors.blue : colors.paper, flexShrink: 0 }}>
+                {counting && !demoPairPending && !active
+                  ? <Text testID="recognition-countdown-number"
+                    accessibilityLabel={`${countdownView.secondsRemaining} seconds remaining`}
+                    style={[s.title, { color: colors.paper, fontSize: 28, lineHeight: 34, fontVariant: ['tabular-nums'] }]}>
+                    {countdownView.secondsRemaining}
+                  </Text>
+                  : <Icon name={demoPairPending ? 'arrow-right' : 'users'} size={21} color={colors.blue} />}
+              </View>
+            </View>
+            <View accessibilityRole="progressbar" accessibilityLabel="Recognition hold progress"
+              accessibilityValue={{ min: 0, max: 100, now: Math.round(countdownView.progress * 100) }}
+              style={{ height: 4, borderRadius: 2, overflow: 'hidden', backgroundColor: colors.line }}>
+              <View style={{ height: 4, borderRadius: 2, backgroundColor: colors.blue,
+                width: `${Math.round(countdownView.progress * 100)}%` }} />
+            </View>
+            {active && !demoPairPending && <Button tone="secondary" icon="arrow-right"
+              disabled={Boolean(scanView) || busy}
+              onPress={() => {
+                if (!focused || !pageVisible() || leaving.current) return;
+                resetCountdown();
+                const generation = scope.current.generation;
+                attempt.current = generation;
+                setDemoPairPending(true);
+                setAuthorizedConversation({ id: active.id, generation });
+              }}>Resume existing conversation</Button>}
+          </View>}
+        </View>
+        <FaceCamera active={cameraActive} scopeId={`live:${id}:${app.mode}:${me?.id ?? 'unregistered'}`}
+          overlays={overlays} onFrame={onFrame} onCameraReset={resetCountdown}
+          style={{ height: Math.max(260, Math.min(440, height - 410)) }} />
         {scanView && <View style={[s.soft, s.between]}>
           <View style={[s.grow, { gap: 2 }]}><Text style={s.label}>{`Scanning ${scanView.name} · ${scanView.count}/${FACE_SCAN_SAMPLES}`}</Text>
             <Text style={s.small}>{scanView.hint}</Text></View>
@@ -194,6 +375,7 @@ export function LiveCameraScreen() {
                   {has ? 'Rescan' : mine ? 'Scan my face' : 'Scan face'}</Button></View>
                 {has && <View style={s.grow}><Button tone="danger" icon="trash-2" disabled={Boolean(scanView) || busy}
                   onPress={() => void perform(async () => {
+                    resetCountdown();
                     await app.deleteFaceScan(person.id);
                     setNotice(`${firstName(person.name)}’s face scan was deleted.`);
                   })}>Delete scan</Button></View>}
@@ -210,10 +392,10 @@ export function LiveCameraScreen() {
               <View style={s.row}>
                 <View style={s.grow}><Button icon="camera" disabled={!newPerson.name.trim() || !consented || Boolean(scanView)}
                   onPress={() => { startScan({ name: newPerson.name.trim(), role: newPerson.role.trim() }); setNewPerson(null); }}>Scan their face</Button></View>
-                <View style={s.grow}><Button tone="ghost" onPress={() => setNewPerson(null)}>Cancel</Button></View>
+                <View style={s.grow}><Button tone="ghost" onPress={() => { resetCountdown(); setNewPerson(null); }}>Cancel</Button></View>
               </View>
             </View> : <Button tone="ghost" icon="user-plus" disabled={Boolean(scanView)}
-              onPress={() => setNewPerson({ name: '', role: '' })}>{`Add a person (${members.length} of ${DEMO_FACE_LIMIT})`}</Button>)}
+              onPress={() => { resetCountdown(); setNewPerson({ name: '', role: '' }); }}>{`Add a person (${members.length} of ${DEMO_FACE_LIMIT})`}</Button>)}
         </View>
         <View style={[s.row, { alignItems: 'flex-start' }]}><Icon name="shield" size={17} color={colors.muted} />
           <Text style={[s.small, s.grow]}>Recognition runs on this device. Camera frames are never saved or uploaded, and faces without a scan are never identified.</Text></View>

@@ -73,14 +73,18 @@ Preview state is memory-only and resets on reload. Alex, Sam, their AI-generated
 
 From an enabled event, choose **LIVE Camera**. In the preview:
 
-1. Tick the consent box, then **Scan face** for Sam (or **Add a person**, up to five people, and scan someone who agreed). Hold one face in frame for a second; three consistent samples are taken.
-2. Point the camera at that person. They get a green box with their name and talking points; your own scan shows as **You**; anyone without a scan is **Not registered**.
-3. The other side's recognition of you is simulated about 1.5 seconds later. The conversation screen inherits the existing video stream and uses real two-hand gesture detection to finish; audio and the recap remain samples in preview mode.
+1. Tick the consent box, then **Scan my face** and **Scan face** for one consenting attendee. You can also **Add a person**, up to five total. Scan one person at a time; three consistent samples are taken.
+2. Bring yourself and exactly one other registered, enabled attendee into the same camera view. The other person gets a green box, their name and talking points; your own scan shows as **You**. An unregistered face does not count.
+3. Keep both faces recognized for the visible **5, 4, 3, 2, 1** countdown. Losing either face, changing the pair, adding an extra face, stopping the camera, or changing a scan resets the hold. Only a fresh frame sampled after the full five seconds can start the conversation; a timer or frozen video cannot.
+4. The conversation screen inherits the existing video stream and uses real two-hand gesture detection to finish. An already-open demo conversation has an explicit **Resume existing conversation** action instead of silently bypassing the hold. Audio and the recap remain samples in preview mode.
+
+This is a same-camera laptop demo, not a simulated acknowledgment from another device. The live backend's authenticated reciprocal-sighting flow is separate and unchanged.
 
 How it works:
 
 - **On-device model:** [face-api](https://github.com/vladmandic/face-api) (MIT) runs TensorFlow.js in the browser: a tiny face detector, 68-point landmarks and a 128-number ResNet descriptor. `scripts/copy-face-models.mjs` copies the ~7 MB of weights into `public/models/face-api` on install and before `web`/`build:web`; they are not committed. The library and models load only when LIVE Camera opens.
-- **Matching:** the closest scan within a 0.5 distance wins, but only if it beats the runner-up by 0.06; a person must be matched several times over 0.6 seconds before counting. A scan that already matches another attendee is refused.
+- **Matching:** the closest scan within a 0.5 distance wins, but only if it beats the runner-up by 0.06. Live sighting reports require repeated matches over 0.6 seconds; demo pairing requires the same two people throughout its five-second hold. A scan that already matches another attendee is refused.
+- **Demo freshness:** detection is serial and ignores repeated video timestamps. The hold uses a monotonic clock, rejects delayed/replayed samples and resets after a 1,200 ms evidence gap. Backgrounding, camera errors, scan changes and context changes invalidate pending attempts; the countdown display can expire progress but cannot create a conversation.
 - **Synced database (live backend):** `faceDirectory` is a reactive Convex query, so every open LIVE Camera updates the moment an attendee joins, enables, pauses, rescans or deletes. It returns only members who have Glance enabled and a face scan, and only to viewers who enabled Glance themselves.
 - **Mutual pairing:** each phone calls `reportSighting` about once a second while it steadily recognizes someone. When both directions arrive within `SIGHTING_WINDOW_MS`, one event-mode conversation is created; Convex serializes the race, so both phones open the same conversation. Fresh sightings are needed for every new encounter.
 - **Platform limits:** recognition runs in browsers (desktop, and phone browsers over HTTPS or localhost). The iPhone app shows a placeholder until the same model is ported natively; templates from a different model would never match. Browser participants still cannot record audio, so a real two-person live conversation needs the native recorder.

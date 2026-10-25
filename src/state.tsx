@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { FaceDirectory, GlanceDataClient, ProfileInput, SightingResult, Snapshot } from './domain';
-import { FACE_MODEL, FACE_SCAN_POLICY_VERSION, SIGHTING_WINDOW_MS } from './domain';
+import { FACE_MODEL, FACE_SCAN_POLICY_VERSION } from './domain';
 import { createGlanceClient } from './data/convexClient';
 import { createDemoEncounter, demoFaceDirectory, demoReducer, demoSnapshot, initialDemo, type DemoAction } from './demo';
 import { getDeviceToken } from './session';
@@ -191,18 +191,12 @@ export function GlanceProvider({ children }: { children: React.ReactNode }) {
     dispatch({ type: 'addPerson', eventId, profile: { id, name: name.trim(), role: role.trim(), photoUrl } });
     return id;
   };
-  // The preview has no second phone, so the other person's recognition of you is
-  // simulated: it "arrives" a moment after your camera first steadily sees them.
-  const demoSightings = useRef(new Map<string, { first: number; last: number }>());
+  // A local sighting is never a simulated second device's acknowledgment.
+  // LIVE Camera demo pairing has its own fresh-frame five-second co-visibility
+  // gate. Authenticated reciprocal sightings remain a live-backend operation.
   const reportSighting = async (eventId: string, personId: string): Promise<SightingResult> => {
     if (mode === 'live') return client!.reportSighting(token, eventId, personId, captureSource);
-    const key = `${sample.actor}:${eventId}:${personId}`, now = Date.now();
-    const seen = demoSightings.current.get(key);
-    const first = seen && now - seen.last < SIGHTING_WINDOW_MS ? seen.first : now;
-    demoSightings.current.set(key, { first, last: now });
-    if (now - first < 1_500) return { status: 'waiting' };
-    demoSightings.current.delete(key);
-    return { status: 'paired', conversationId: await pair(eventId, personId) };
+    return { status: 'waiting' };
   };
   const snapshot = mode === 'demo' ? demoSnapshot(sample, selectedEvent) : liveSnapshot;
   const captureChoiceLocked = pairing || Boolean(snapshot?.activeRecorderConversationId);

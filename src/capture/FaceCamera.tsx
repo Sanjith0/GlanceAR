@@ -5,8 +5,9 @@ import { colors, fonts } from '../theme';
 import { projectBox, type FaceBox } from '../face';
 import { cropFace, detectFaces, faceEngineSupported, loadFaceEngine, type DetectedFace } from './faceEngine';
 import { acquireLiveCameraStream, type LiveCameraLease } from './liveCameraStream';
+import { startFreshFaceFrames } from './faceFrameFreshness';
 
-export type FaceFrame = { faces: DetectedFace[]; width: number; height: number; crop: (box: FaceBox) => string };
+export type FaceFrame = { faces: DetectedFace[]; width: number; height: number; sampledAt: number; crop: (box: FaceBox) => string };
 export type FaceOverlay = {
   key: string; box: FaceBox; title: string; detail?: string; points?: string[];
   tone: 'match' | 'self' | 'unknown' | 'scan';
@@ -16,6 +17,7 @@ export type FaceCameraProps = {
   scopeId?: string;
   overlays: FaceOverlay[];
   onFrame: (frame: FaceFrame) => void;
+  onCameraReset?: () => void;
   style?: StyleProp<ViewStyle>;
 };
 
@@ -27,10 +29,8 @@ const tones = {
 };
 
 /** Video only. Only an explicit, bounded conversation handoff survives unmount. */
-export default function FaceCamera({ active, scopeId = 'live:camera', overlays, onFrame, style }: FaceCameraProps) {
+export default function FaceCamera({ active, scopeId = 'live:camera', overlays, onFrame, onCameraReset, style }: FaceCameraProps) {
   const video = useRef<HTMLVideoElement | null>(null);
-  const latestFrame = useRef(onFrame);
-  useLayoutEffect(() => { latestFrame.current = onFrame; });
   const [status, setStatus] = useState('Starting camera…');
   const [facing, setFacing] = useState<'environment' | 'user'>('environment');
   const [mirrored, setMirrored] = useState(true);
@@ -38,11 +38,39 @@ export default function FaceCamera({ active, scopeId = 'live:camera', overlays, 
   const [source, setSource] = useState({ width: 0, height: 0 });
   const [view, setView] = useState({ width: 0, height: 0 });
   const [visible, setVisible] = useState(() => typeof document === 'undefined' || document.visibilityState === 'visible');
+  const [visibilityEpoch, setVisibilityEpoch] = useState(0);
+  const supported = faceEngineSupported();
+  const identity = JSON.stringify([active, scopeId, facing, visible, visibilityEpoch, supported]);
+  const latest = useRef({ identity, onFrame, onCameraReset, blocked: !active || !visible });
+  const committedIdentity = useRef<string | null>(null);
+  const [renderedIdentity, setRenderedIdentity] = useState(identity);
+  if (renderedIdentity !== identity) {
+    setRenderedIdentity(identity);
+    setStatus('Starting camera…');
+    setSource({ width: 0, height: 0 });
+  }
+  useLayoutEffect(() => {
+    const changed = committedIdentity.current !== identity;
+    latest.current = { identity, onFrame, onCameraReset,
+      blocked: changed ? !active || !visible : latest.current.blocked };
+    committedIdentity.current = identity;
+    if (changed) latest.current.onCameraReset?.();
+  });
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
-    const update = () => setVisible(document.visibilityState === 'visible');
-    const hide = () => setVisible(false);
+    const hide = () => {
+      // Invalidate before React commits visibility, so an awaited frame cannot
+      // publish in the gap between pagehide and passive-effect cleanup.
+      latest.current.blocked = true;
+      latest.current.onCameraReset?.();
+      setVisibilityEpoch(epoch => epoch + 1);
+      setVisible(false);
+    };
+    const update = () => {
+      if (document.visibilityState === 'visible') setVisible(true);
+      else hide();
+    };
     document.addEventListener('visibilitychange', update);
     window.addEventListener('pagehide', hide);
     window.addEventListener('pageshow', update);
@@ -53,51 +81,63 @@ export default function FaceCamera({ active, scopeId = 'live:camera', overlays, 
     };
   }, []);
 
-  const supported = faceEngineSupported();
   useEffect(() => {
     if (!active || !visible || !supported) return;
     const element = video.current;
-    let stopped = false, lease: LiveCameraLease | null = null, timer: ReturnType<typeof setTimeout> | undefined;
+    let stopped = false, lease: LiveCameraLease | null = null;
+    let stopFrames: (() => void) | undefined, unwatchTracks: (() => void) | undefined;
     const controller = new AbortController();
-    const loop = async () => {
-      if (stopped || !element) return;
-      if (!lease?.stream.getVideoTracks().some(track => track.readyState === 'live')) {
-        setStatus('Camera stopped. Reopen LIVE Camera to continue.');
-        return;
-      }
-      try {
-        if (element.readyState >= 2 && element.videoWidth) {
-          const faces = await detectFaces(element);
-          if (stopped) return;
-          setSource(old => old.width === element.videoWidth && old.height === element.videoHeight
-            ? old : { width: element.videoWidth, height: element.videoHeight });
-          latestFrame.current({ faces, width: element.videoWidth, height: element.videoHeight, crop: box => cropFace(element, box) });
-        }
-      } catch (error) {
-        if (!stopped) setStatus(`Face detection stopped: ${error instanceof Error ? error.message : 'unknown error'}`);
-        return;
-      }
-      timer = setTimeout(() => { void loop(); }, 120);
+    const current = () => !stopped && latest.current.identity === identity && !latest.current.blocked;
+    const liveTrack = () => Boolean(lease?.stream.getVideoTracks().some(track => track.readyState === 'live'));
+    const documentVisible = () => document.visibilityState === 'visible';
+    const reset = () => { if (current()) latest.current.onCameraReset?.(); };
+    const cameraStopped = () => {
+      if (!current()) return;
+      stopFrames?.();
+      reset();
+      setStatus('Camera stopped. Reopen LIVE Camera to continue.');
     };
     (async () => {
       try {
         if (!element) return;
-        lease = await acquireLiveCameraStream(facing, scopeId, controller.signal);
-        if (stopped) { lease.release(); return; }
+        const acquired = await acquireLiveCameraStream(facing, scopeId, controller.signal);
+        if (!current() || !documentVisible()) { acquired.release(); return; }
+        lease = acquired;
+        const ended = () => cameraStopped();
+        lease.stream.getVideoTracks().forEach(track => track.addEventListener('ended', ended));
+        unwatchTracks = () => acquired.stream.getVideoTracks().forEach(track => track.removeEventListener('ended', ended));
         element.srcObject = lease.stream;
         await element.play();
-        if (stopped) return;
+        if (!current()) return;
+        if (!liveTrack() || !documentVisible()) { cameraStopped(); return; }
         setMirrored(lease.mirrored);
         void navigator.mediaDevices.enumerateDevices()
-          .then(devices => { if (!stopped) setCameras(devices.filter(d => d.kind === 'videoinput').length); })
+          .then(devices => {
+            if (current() && liveTrack() && documentVisible()) setCameras(devices.filter(d => d.kind === 'videoinput').length);
+          })
           .catch(() => {});
         setStatus('Loading on-device face models…');
         await loadFaceEngine();
-        if (stopped) return;
+        if (!current()) return;
+        if (!liveTrack() || !documentVisible()) { cameraStopped(); return; }
         setStatus('Live');
-        void loop();
+        stopFrames = startFreshFaceFrames({
+          video: element, detectFaces, isCurrent: current, isLive: liveTrack, isVisible: documentVisible,
+          onReset: reset, onStopped: cameraStopped,
+          onFrame: frame => {
+            if (!current() || !liveTrack() || !documentVisible()) return;
+            setSource(old => old.width === frame.width && old.height === frame.height
+              ? old : { width: frame.width, height: frame.height });
+            latest.current.onFrame({ ...frame, crop: box => cropFace(element, box) });
+          },
+          onError: error => {
+            if (!current() || !documentVisible()) return;
+            setStatus(`Face detection stopped: ${error instanceof Error ? error.message : 'unknown error'}`);
+          },
+        });
       } catch (error) {
-        if (stopped) return;
+        if (!current() || !documentVisible()) return;
+        reset();
         lease?.release();
         lease = null;
         if (element) element.srcObject = null;
@@ -108,14 +148,17 @@ export default function FaceCamera({ active, scopeId = 'live:camera', overlays, 
       }
     })();
     return () => {
+      // A new layout identity already reset its own scope. Old cleanup must not
+      // call a new scope's callback; ordinary unmount still resets immediately.
+      reset();
       stopped = true;
-      clearTimeout(timer);
+      stopFrames?.();
+      unwatchTracks?.();
       controller.abort();
       lease?.release();
       if (element) element.srcObject = null;
-      setStatus('Starting camera…');
     };
-  }, [active, visible, supported, facing, scopeId]);
+  }, [active, visible, supported, facing, scopeId, identity]);
 
   const shown = !active || !visible ? 'Camera off'
     : !supported ? 'This browser can’t open the camera here. Use a current browser over HTTPS or localhost.' : status;
@@ -147,7 +190,11 @@ export default function FaceCamera({ active, scopeId = 'live:camera', overlays, 
     {!live && <View style={styles.status}><Icon name={active ? 'camera' : 'camera-off'} size={26} color="#BCD1D6" />
       <Text style={styles.statusText}>{shown}</Text></View>}
     {live && cameras > 1 && <Pressable accessibilityRole="button" accessibilityLabel="Switch camera"
-      onPress={() => setFacing(facing === 'environment' ? 'user' : 'environment')} style={styles.flip}>
+      onPress={() => {
+        latest.current.blocked = true;
+        latest.current.onCameraReset?.();
+        setFacing(facing === 'environment' ? 'user' : 'environment');
+      }} style={styles.flip}>
       <Icon name="refresh-cw" size={18} color={colors.paper} /></Pressable>}
   </View>;
 }
