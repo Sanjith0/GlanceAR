@@ -141,13 +141,13 @@ export function GlanceProvider({ children }: { children: React.ReactNode }) {
     if (!title.trim()) throw new Error('Give your event a name.');
     if (mode === 'live') return client!.createEvent(token, title.trim(), location.trim());
     const id = `event-${Date.now()}`;
-    dispatch({ type: 'event', event: { id, title: title.trim(), location: location.trim(), hostId: sample.actor, inviteCode: `DEMO${String(Date.now()).slice(-6)}` } });
+    dispatch({ type: 'event', event: { id, title: title.trim(), location: location.trim(), hostId: sample.actor, inviteCode: Array.from({ length: 4 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random() * 32)]).join('') } });
     return id;
   };
   const joinEvent = async (code: string) => {
     if (mode === 'live') return client!.joinEvent(token, code);
     const event = sample.events.find(e => e.inviteCode === code.trim().toUpperCase());
-    if (!event) throw new Error('That invitation was not found. Try GLANCE2026 for the sample event.');
+    if (!event) throw new Error('That invitation was not found. Try GL26 for the sample event.');
     dispatch({ type: 'join', eventId: event.id }); return event.id;
   };
   const pair = async (eventId: string, partnerId: string) => {

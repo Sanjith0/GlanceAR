@@ -25,7 +25,8 @@ export function loadFaceEngine(): Promise<FaceApi> {
     const faceapi = await import('@vladmandic/face-api');
     // The bundled TensorFlow.js has these at runtime; face-api's typings omit them.
     const tf = faceapi.tf as unknown as { setBackend(name: string): Promise<boolean>; ready(): Promise<void> };
-    if (!await tf.setBackend('webgl').catch(() => false)) await tf.setBackend('cpu');
+    const webgl = await tf.setBackend('webgl').catch(() => false);
+    if (!webgl) await tf.setBackend('cpu');
     await tf.ready();
     const base = modelBase();
     await Promise.all([
@@ -33,11 +34,28 @@ export function loadFaceEngine(): Promise<FaceApi> {
       faceapi.nets.faceLandmark68Net.loadFromUri(base),
       faceapi.nets.faceRecognitionNet.loadFromUri(base),
     ]);
+    // The first WebGL run of each net compiles its shaders, which can take seconds on
+    // phones. Do it once on a blank canvas so the first real frame is fast.
+    if (webgl) await warmUp(faceapi).catch(() => {});
     return faceapi;
   })();
   // A failed download may be retried by reopening the camera.
   engine.catch(() => { engine = null; });
   return engine;
+}
+
+async function warmUp(faceapi: FaceApi): Promise<void> {
+  const canvas = document.createElement('canvas');
+  canvas.width = 416; canvas.height = 416;
+  await faceapi.detectAllFaces(canvas, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 }));
+  await faceapi.nets.faceLandmark68Net.detectLandmarks(canvas);
+  await faceapi.nets.faceRecognitionNet.computeFaceDescriptor(canvas);
+}
+
+/** Start downloading and warming the models before any camera opens. Errors retry on open. */
+export function preloadFaceEngine(): void {
+  if (!faceEngineSupported()) return;
+  void loadFaceEngine().catch(() => {});
 }
 
 export async function detectFaces(video: HTMLVideoElement): Promise<DetectedFace[]> {

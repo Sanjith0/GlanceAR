@@ -27,7 +27,7 @@ export interface DemoState {
 export function initialDemo(): DemoState {
   return {
     actor: 'alex', people: [...samplePeople],
-    events: [{ id: 'builders', title: 'Builders, after hours', location: 'The studio · Demo event', inviteCode: 'GLANCE2026', hostId: 'alex' }],
+    events: [{ id: 'builders', title: 'Builders, after hours', location: 'The studio · Demo event', inviteCode: 'GL26', hostId: 'alex' }],
     memberships: { builders: ['alex', 'sam'] },
     eventPermissions: { builders: ['alex', 'sam'] }, conversations: [], faceScans: {},
   };

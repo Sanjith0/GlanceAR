@@ -18,6 +18,8 @@ export type FaceCameraProps = {
  * No native face model is linked yet. Templates come from the browser's face-api
  * model, so a native detector must use the same model or it would never match.
  */
+export function preloadFaceModels(): void {}
+
 export default function FaceCamera({ style }: FaceCameraProps) {
   return <View style={[s.soft, { alignItems: 'center', padding: 28 }, style]}>
     <Icon name="camera-off" size={28} color={colors.blue} />

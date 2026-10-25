@@ -1,11 +1,11 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, Text, View, useWindowDimensions } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Badge, Button, Empty, Field, Icon, Notice, Page, Portrait } from './components';
 import { colors, s } from './theme';
 import { useFaceDirectory, useGlance } from './state';
 import { DemoBanner, GlobalStatus, useOperation, useScreenFocused } from './screens';
-import FaceCamera, { type FaceFrame, type FaceOverlay } from './capture/FaceCamera';
+import FaceCamera, { preloadFaceModels, type FaceFrame, type FaceOverlay } from './capture/FaceCamera';
 import { consistentSamples, faceDistance, MATCH_THRESHOLD, scanProblem } from './face';
 import { DEMO_FACE_LIMIT, FACE_SCAN_SAMPLES } from './domain';
 
@@ -26,6 +26,8 @@ export function FaceRegistrationScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const app = useGlance(), { busy, perform } = useOperation();
   const focused = useScreenFocused();
+  // Models download and warm up while people read this page, so scans and step 2 open fast.
+  useEffect(() => { preloadFaceModels(); }, []);
   const { width, height } = useWindowDimensions();
   const { selectEvent } = app;
   useFocusEffect(useCallback(() => { selectEvent(id); }, [id, selectEvent]));

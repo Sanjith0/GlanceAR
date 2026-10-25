@@ -262,7 +262,7 @@ export const createEvent = mutation({
     if (count.length >= 100) fail("Event limit reached.");
     // Convex seeds Math.random per transaction, making retry behavior deterministic.
     let inviteCode = "";
-    do { inviteCode = Array.from({ length: 10 }, () => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[Math.floor(Math.random() * 32)]).join(""); }
+    do { inviteCode = Array.from({ length: 4 }, () => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[Math.floor(Math.random() * 32)]).join(""); }
     while (await ctx.db.query("events").withIndex("by_invite", (q) => q.eq("inviteCode", inviteCode)).unique());
     const eventId = await ctx.db.insert("events", { title: args.title.trim(), location: args.location.trim(), inviteCode, hostId: me._id });
     await ctx.db.insert("memberships", { eventId, profileId: me._id });

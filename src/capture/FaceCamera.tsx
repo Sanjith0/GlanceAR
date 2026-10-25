@@ -29,6 +29,9 @@ const tones = {
 };
 
 /** Video only. Only an explicit, bounded conversation handoff survives unmount. */
+/** Fetch and warm the face models ahead of time (no camera access). */
+export { preloadFaceEngine as preloadFaceModels } from './faceEngine';
+
 export default function FaceCamera({ active, scopeId = 'live:camera', overlays, onFrame, onCameraReset, style }: FaceCameraProps) {
   const video = useRef<HTMLVideoElement | null>(null);
   const [status, setStatus] = useState('Starting camera…');
@@ -100,6 +103,9 @@ export default function FaceCamera({ active, scopeId = 'live:camera', overlays, 
     (async () => {
       try {
         if (!element) return;
+        // Download and warm the models while the camera starts, not after.
+        const models = loadFaceEngine();
+        models.catch(() => {});
         const acquired = await acquireLiveCameraStream(facing, scopeId, controller.signal);
         if (!current() || !documentVisible()) { acquired.release(); return; }
         lease = acquired;
@@ -117,7 +123,7 @@ export default function FaceCamera({ active, scopeId = 'live:camera', overlays, 
           })
           .catch(() => {});
         setStatus('Loading on-device face models…');
-        await loadFaceEngine();
+        await models;
         if (!current()) return;
         if (!liveTrack() || !documentVisible()) { cameraStopped(); return; }
         setStatus('Live');

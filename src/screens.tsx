@@ -141,7 +141,7 @@ export function EventsScreen() {
         <Field label="Location" value={location} onChangeText={setLocation} maxLength={160} placeholder="Where are you meeting?" />
         <Button busy={busy} onPress={() => void perform(async () => openEvent(await app.createEvent(title, location)))}>Create your event</Button>
       </> : <>
-        <Field label="Invitation code" value={code} onChangeText={setCode} autoCapitalize="characters" autoCorrect={false} maxLength={24} placeholder={app.mode === 'demo' ? 'Try GLANCE2026' : 'Enter the host’s code'} />
+        <Field label="Invitation code" value={code} onChangeText={setCode} autoCapitalize="characters" autoCorrect={false} maxLength={24} placeholder={app.mode === 'demo' ? 'Try GL26' : 'Enter the host’s code'} />
         <Button busy={busy} onPress={() => void perform(async () => openEvent(await app.joinEvent(code)))}>Join event</Button>
       </>}
     </View>}
