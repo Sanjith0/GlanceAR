@@ -7,8 +7,8 @@ Your first prototype now has a phone interface, a shared backend and a separate 
 - **Phone application:** Expo / React Native source for event creation and invitations, a required portrait, profile-based pairing, two-person recording approval, a recording screen, mutual exchange confirmation and a shared recap inbox.
 - **iPhone capture:** Native microphone recording with expiring consent leases, immediate recorder-local Stop, protected temporary WAV files and two-hand three-finger gesture detection.
 - **Glasses client:** A separate native iPhone app using Meta Wearables DAT 1.0.1 for glasses camera frames. It deliberately uses the iPhone microphone for audio; it is not a standalone application installed on the glasses.
-- **Backend and AI integration:** Convex permissions, conversation state, private audio upload, scheduled cleanup and a server-side Meta transcription/summary pipeline. Live AI has not been called; missing credentials cause an explicit failure, never a sample recap.
-- **Verification:** TypeScript, lint, 71 application/backend/lifecycle tests, six additional static glasses-source checks, local backend smoke tests and browser walkthrough checks passed. These do not establish native compilation or hardware operation.
+- **Backend and AI integration:** Convex permissions, conversation state, private audio upload, scheduled cleanup and a server-side Meta transcription/summary pipeline. Your credential passed live synthetic transcription and structured-summary tests; a hosted phone backend still needs configuration.
+- **Verification:** TypeScript, lint, 86 application/backend/lifecycle/web-export tests, six additional static glasses-source checks, local backend smoke tests and browser walkthrough checks passed. These do not establish native compilation or hardware operation.
 
 The phone app and glasses client currently share backend records and capture logic, not a single installed binary. The exact Adventurer camera capability is an on-device verification step rather than a promised compatibility result.
 
@@ -22,7 +22,7 @@ Each perspective receives the same sample recap with the other person's portrait
 
 1. Open `README.md` in the source bundle and install the locked dependencies using Node 24.
 2. Configure a reachable Convex deployment. A phone cannot use the sandbox's loopback address.
-3. Add the Meta API credential only to the backend's server-side environment.
+3. Configure the Meta API credential only in the backend's server-side environment. The securely saved credential has been tested, but has not been copied into a Convex deployment.
 4. Build the Expo development client with your Mac/Xcode or an operator-configured EAS signing setup. Expo Go does not contain the custom native modules ([Expo native-code guide](https://docs.expo.dev/workflow/customizing/)).
 5. Build the separate glasses client using `docs/IOS-GLASSES.md`, enable Developer Mode, configure signing/Meta registration, and confirm actual camera frames on your Adventurer hardware.
 6. Run the two-phone consent, recording, Stop, exchange and recap checklist, first in a quiet room and then under realistic event noise.
@@ -39,6 +39,6 @@ Your source bundle includes the complete setup guides and `docs/VERIFICATION.md`
 
 ## Before wider use
 
-The native builds and live Meta flow remain untested, and the Expo toolchain still reports five high-severity entries corresponding to two underlying transitive advisories. The source contains an audit runbook; do not force-downgrade Expo to clear the report.
+The native builds and full two-phone flow remain untested, and the Expo toolchain still reports five high-severity entries corresponding to two underlying transitive advisories. The source contains an audit runbook; do not force-downgrade Expo to clear the report.
 
 The repository has not been pushed publicly while your publishing approval is pending. Your Mac/signing setup and glasses Developer Mode answers determine the next installation path.

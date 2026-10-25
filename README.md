@@ -62,6 +62,10 @@ Enter the sample event and start a conversation. Use the clearly labelled Alex/S
 
 Preview state is memory-only and resets on reload. Alex, Sam, their AI-generated portraits and the recap are fictional sample content, not actual users or a transcription result.
 
+For a portable static preview, run `npm run build:web` and serve `dist`. The web-only adapters retain Expo Router's navigation engine but keep routes in the current document's hash, so an unknown hosting subdirectory does not become an application route.
+
+The export script makes asset references relative and moves exported dependency assets to `assets/vendor`. These adapters target the locked Expo Router 58 history/link modules and must be retested after an Expo upgrade; native iOS/Android module resolution is unchanged.
+
 ## Connect a real backend
 
 Follow [the backend runbook](convex/README.md) for local development and deployment. A local backend was exercised without creating a hosted project; a physical phone needs a reachable deployment, not its own `127.0.0.1`.
@@ -81,6 +85,8 @@ For a hosted development deployment, run the normal `npx convex dev` setup in yo
 Set `META_API_KEY` only in that deployment's server-side environment through its dashboard or approved secret workflow. Never put it in `EXPO_PUBLIC_*`, app configuration, client source, a screenshot or a committed environment file. Live processing fails explicitly if the key or provider is unavailable; it never substitutes the scripted sample recap.
 
 Meta's transcription endpoint accepts mono 16-bit PCM WAV at 16 or 24 kHz, not the usual phone AAC/M4A recording; the backend validates the container and audio format before sending it ([Meta speech-to-text documentation](https://dev.meta.ai/docs/speech-to-text)). The selected text model uses Standard mode rather than Contributor mode, but that is not a promise of zero provider retention ([Meta model documentation](https://dev.meta.ai/docs/models)).
+
+The supplied credential passed live direct-API checks with synthetic speech and an actual transcription-to-summary chain. It has not been installed into a Convex deployment, and neither those checks nor the browser preview establish a working native two-phone pipeline.
 
 ## Install the iPhone app
 

@@ -327,14 +327,22 @@ export function ConversationScreen() {
       <Text style={[s.small, { textAlign: 'center' }]}>{app.mode === 'demo' ? 'A walkthrough only. No microphone, camera, or AI call is active.' : 'Local Stop closes this recorder immediately. Remote Stop needs a connection; the short consent lease is the fallback. Leaving this screen discards this device’s recording.'}</Text>
     </>}
     {['ended', 'failed'].includes(conversation.status) && <>
-      <View style={{ gap: 10 }}><Badge green>RECORDING ENDED</Badge><Text style={s.title}>Make it mutual.</Text><Text style={s.muted}>A good conversation is only the beginning.</Text></View>
-      <ApprovalList conversation={conversation} exchange />
-      <Text style={s.body}>Confirm to save this connection and receive the same AI recap. The recap is shared only after both of you confirm; your event portrait is already visible to event members.</Text>
+      <View style={{ gap: 10 }}><Badge green>RECORDING ENDED</Badge>
+        <Text style={s.title}>{conversation.status === 'failed' ? 'Recap unavailable.' : 'Make it mutual.'}</Text>
+        <Text style={s.muted}>{conversation.status === 'failed' ? 'Your conversation has ended. Nothing new will be recorded automatically.' : 'A good conversation is only the beginning.'}</Text></View>
+      {conversation.status === 'ended' && <><ApprovalList conversation={conversation} exchange />
+        <Text style={s.body}>Confirm to save this connection and receive the same AI recap. The recap is shared only after both of you confirm; your event portrait is already visible to event members.</Text></>}
       {conversation.error ? <Notice error>{conversation.error}</Notice> : null}
       {capture.hasUpload && <Button tone="secondary" busy={capture.busy} onPress={() => void capture.retryUpload()}>Retry audio upload</Button>}
-      {!confirmed ? <Button busy={busy} icon="check" onPress={() => void perform(exchange)}>Confirm connection</Button> :
-        <Notice>Your confirmation is in. Waiting for the other participant and the recorder’s upload.</Notice>}
-      {conversation.status === 'failed' && app.mode === 'live' && <Button tone="secondary" busy={busy} onPress={() => void perform(() => app.client!.retryProcessing(app.token, id))}>Retry recap processing</Button>}
+      {conversation.status === 'ended' && (!confirmed ? <Button busy={busy} icon="check" onPress={() => void perform(exchange)}>Confirm connection</Button> :
+        <Notice>Your confirmation is in. Waiting for the other participant and the recorder’s upload.</Notice>)}
+      {conversation.status === 'failed' && <><Notice>{capture.hasUpload
+        ? 'The server copy was deleted. You can retry uploading your retained local file, or start a new conversation.'
+        : 'The temporary recording is no longer available. Record a new conversation to try again.'}</Notice>
+        <Button tone="secondary" busy={busy} onPress={() => void perform(async () => {
+          const next = await app.pair(conversation.eventId, other.id);
+          router.replace(`/conversation/${next}`);
+        })}>Start another conversation</Button></>}
       {!discard ? <Button tone="ghost" onPress={() => setDiscard(true)}>Discard and don’t connect</Button> :
         <View style={s.card}><Text style={s.label}>Discard this conversation?</Text><Text style={s.small}>This cancels the exchange for both of you and deletes any retained audio. You can start a new conversation later.</Text>
           <Button tone="danger" busy={busy} onPress={() => void perform(capture.cancel)}>Delete recording and cancel</Button>
