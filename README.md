@@ -65,6 +65,8 @@ Choose **Enter event** and allow camera access. The fictional attendees already 
 
 Send a message and use the Alex/Sam preview controls to see the other perspective. Return to the event for **Simulate next encounter**; only encounter creation is simulated, and each encounter has a separate chat. The native iPhone app needs a rebuilt development client for its updated hand detector and overlays.
 
+The private Perplexity preview has an opaque sandbox origin and cannot open the camera. It shows an explicit explanation and keeps the manual finish fallback; use localhost or a standalone HTTPS deployment for real browser hand detection.
+
 Preview state is memory-only and resets on reload. Alex, Sam, their AI-generated portraits and the recap are fictional sample content, not actual users or a transcription result.
 
 ## LIVE Camera
