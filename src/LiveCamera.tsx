@@ -314,7 +314,9 @@ export function LiveCameraScreen() {
       </View> : <>
         <View style={{ gap: 12 }}><Text style={[s.eyebrow, { fontSize: 10, letterSpacing: 1 }]}>STEP 2 OF 2</Text>
           <Text style={s.title}>Who’s here?</Text>
-          <Text style={s.muted}>{app.mode === 'demo'
+          <Text style={s.muted}>{cameraDevice === 'glasses'
+            ? 'Look at the person you’re meeting through your glasses for two seconds. You count as present, so only they need to be in view.'
+            : app.mode === 'demo'
             ? 'Keep both registered faces in this camera for two seconds. If either leaves, the countdown restarts.'
             : 'Face the person you’re talking to and point your camera at them while they point theirs at you. Hold for two seconds; once both phones recognize each other, your conversation starts.'}</Text>
           {<View testID="recognition-countdown"
