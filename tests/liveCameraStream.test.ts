@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { LiveCameraPool } from '../src/capture/liveCameraStream';
+import { acquireLiveCameraStream, LiveCameraPool } from '../src/capture/liveCameraStream';
 
 function fixture() {
   let visible = true;
@@ -17,7 +17,32 @@ function fixture() {
   const pool = new LiveCameraPool({ getUserMedia, visible: () => visible, now: () => Date.now() });
   return { pool, getUserMedia, tracks, hide: () => { visible = false; pool.stopAll(); } };
 }
-afterEach(() => { vi.useRealTimers(); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+describe('browser camera availability', () => {
+  function browserEnvironment(origin: string, getUserMedia: ReturnType<typeof vi.fn>) {
+    vi.stubGlobal('window', { origin, addEventListener: vi.fn() });
+    vi.stubGlobal('document', { visibilityState: 'visible', addEventListener: vi.fn() });
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+  }
+
+  it('explains an opaque preview origin without requesting camera permission', async () => {
+    const getUserMedia = vi.fn();
+    browserEnvironment('null', getUserMedia);
+    await expect(acquireLiveCameraStream('environment', 'sandbox-preview'))
+      .rejects.toThrow('Run Glance on localhost or a standalone HTTPS deployment.');
+    expect(getUserMedia).not.toHaveBeenCalled();
+  });
+
+  it('retains the video-only camera path for a normal standalone origin', async () => {
+    const f = fixture();
+    browserEnvironment('https://glance.example', f.getUserMedia);
+    const lease = await acquireLiveCameraStream('environment', 'standalone');
+    expect(f.getUserMedia).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ audio: false }));
+    lease.release();
+    expect(f.tracks[0].stop).toHaveBeenCalledOnce();
+  });
+});
 
 describe('scoped video-only camera handoff', () => {
   it('reuses exactly the original stream and facing through an explicit conversation transfer', async () => {

@@ -53,7 +53,7 @@ Baseline inspected on October 25 on `live-camera-face-recognition` at `a9be9d3`:
 
 ## Live gesture local verification
 
-The October 25 gesture revision passed 216 behavioral tests and 22 native/glasses source-contract checks. Full lint, app typecheck, strict backend typecheck, model integrity verification, and the clean portable production export passed; the export contains 55 files.
+The October 25 gesture revision passed 218 behavioral tests and 22 native/glasses source-contract checks. Full lint, app typecheck, strict backend typecheck, model integrity verification, and the clean portable production export passed; the export contains 55 files.
 
 - **Actual application:** On the nested production export, a real MediaPipe analysis of photographed hands supplied through Chromium's video-only fake camera triggered one finish, retained live video through green, opened the labeled sample chat, and stopped the stream exactly once. No injected landmarks or simulated finish callback were used.
 - **Camera lifecycle:** The component harness passed 23 strict assertions, including exact stream/track reuse, no stop across transfer, stable destination video through consent/recording/green, disarmed holds, bounded transfer expiry, late permission cleanup, and pagehide/pageshow recovery. Its face detector was an empty test adapter; this is not identity or physical-device evidence.

@@ -163,6 +163,9 @@ export class LiveCameraPool {
 
 const pool = new LiveCameraPool({
   getUserMedia: constraints => {
+    if (typeof window !== 'undefined' && window.origin === 'null') {
+      return Promise.reject(new Error('This sandboxed preview cannot open a camera. Run Glance on localhost or a standalone HTTPS deployment.'));
+    }
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
       return Promise.reject(new Error('Camera access requires a supported browser over HTTPS or localhost.'));
     }
