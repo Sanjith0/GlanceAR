@@ -12,6 +12,8 @@ import { talkingPoints } from './talkingPoints';
 import { SIGHTING_REPORT_INTERVAL_MS } from './domain';
 import { inFinalStretch, LIVE_RECOGNITION_FLASH_MS, LIVE_RECOGNITION_HOLD_MS, RecognitionCountdown, type RecognitionCountdownView } from './recognitionCountdown';
 import { RecognitionScope } from './recognitionScope';
+import { glassesShellAvailable, setCameraDevice, useCameraDevice } from './capture/glassesBridge';
+import { CameraPicker } from './CameraPicker';
 
 const firstName = (name: string) => name.split(' ')[0];
 const LIVE_HOLD_LOST_MS = 4_000;
@@ -61,6 +63,9 @@ function ConnectingFlash() {
 export function LiveCameraScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const app = useGlance(), { busy } = useOperation();
+  const cameraDevice = useCameraDevice();
+  const wearingGlasses = useRef(cameraDevice === 'glasses');
+  wearingGlasses.current = cameraDevice === 'glasses';
   const focused = useScreenFocused();
   const { width, height } = useWindowDimensions();
   const { selectEvent } = app;
@@ -258,7 +263,9 @@ export function LiveCameraScreen() {
         const person = match ? people.get(match.profileId) : undefined;
         return person?.glanceEnabled ? person.id : null;
       });
-      const next = countdown.current.observe(ids, me?.id, performance.now(), frame.sampledAt);
+      // Glasses film from the wearer's eyes, so the wearer is implied (like live mode).
+      const seen = wearingGlasses.current && me?.id && !ids.includes(me.id) ? [me.id, ...ids] : ids;
+      const next = countdown.current.observe(seen, me?.id, performance.now(), frame.sampledAt);
       publishCountdown(next);
       if (next.completed && next.partnerId) pairAfterHold(next.partnerId);
       return;
@@ -368,8 +375,10 @@ export function LiveCameraScreen() {
               }}>Resume existing conversation</Button>}
           </View>}
         </View>
+        {glassesShellAvailable() && <CameraPicker value={cameraDevice} onChange={device => { resetCountdown(); setCameraDevice(device); }}
+          note="Look at the person you want to meet. The glasses see what you see." />}
         <View style={[cameraSize, { alignSelf: 'center', borderRadius: 20, overflow: 'hidden' }]}>
-          <FaceCamera active={cameraActive} scopeId={`live:${id}:${app.mode}:${me?.id ?? 'unregistered'}`}
+          <FaceCamera active={cameraActive} scopeId={`live:${id}:${app.mode}:${me?.id ?? 'unregistered'}`} device={cameraDevice}
             overlays={overlays} onFrame={onFrame} onCameraReset={resetCountdown} style={cameraSize} />
           {flashing && <ConnectingFlash />}
         </View>

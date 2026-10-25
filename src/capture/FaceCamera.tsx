@@ -5,6 +5,7 @@ import { colors, fonts } from '../theme';
 import { projectBox, type FaceBox } from '../face';
 import { cropFace, detectFaces, faceEngineSupported, loadFaceEngine, type DetectedFace } from './faceEngine';
 import { acquireLiveCameraStream, type LiveCameraLease } from './liveCameraStream';
+import { acquireGlassesStream, type CameraDevice } from './glassesBridge';
 import { startFreshFaceFrames } from './faceFrameFreshness';
 
 export type FaceFrame = { faces: DetectedFace[]; width: number; height: number; sampledAt: number; crop: (box: FaceBox) => string };
@@ -18,6 +19,8 @@ export type FaceCameraProps = {
   overlays: FaceOverlay[];
   onFrame: (frame: FaceFrame) => void;
   onCameraReset?: () => void;
+  /** 'glasses' only inside the Glance Glasses Live iPhone shell. */
+  device?: CameraDevice;
   style?: StyleProp<ViewStyle>;
 };
 
@@ -32,7 +35,7 @@ const tones = {
 /** Fetch and warm the face models ahead of time (no camera access). */
 export { preloadFaceEngine as preloadFaceModels } from './faceEngine';
 
-export default function FaceCamera({ active, scopeId = 'live:camera', overlays, onFrame, onCameraReset, style }: FaceCameraProps) {
+export default function FaceCamera({ active, scopeId = 'live:camera', overlays, onFrame, onCameraReset, device = 'phone', style }: FaceCameraProps) {
   const video = useRef<HTMLVideoElement | null>(null);
   const [status, setStatus] = useState('Starting camera…');
   const [facing, setFacing] = useState<'environment' | 'user'>('environment');
@@ -43,7 +46,7 @@ export default function FaceCamera({ active, scopeId = 'live:camera', overlays, 
   const [visible, setVisible] = useState(() => typeof document === 'undefined' || document.visibilityState === 'visible');
   const [visibilityEpoch, setVisibilityEpoch] = useState(0);
   const supported = faceEngineSupported();
-  const identity = JSON.stringify([active, scopeId, facing, visible, visibilityEpoch, supported]);
+  const identity = JSON.stringify([active, scopeId, facing, visible, visibilityEpoch, supported, device]);
   const latest = useRef({ identity, onFrame, onCameraReset, blocked: !active || !visible });
   const committedIdentity = useRef<string | null>(null);
   const [renderedIdentity, setRenderedIdentity] = useState(identity);
@@ -106,7 +109,8 @@ export default function FaceCamera({ active, scopeId = 'live:camera', overlays, 
         // Download and warm the models while the camera starts, not after.
         const models = loadFaceEngine();
         models.catch(() => {});
-        const acquired = await acquireLiveCameraStream(facing, scopeId, controller.signal);
+        const acquired = device === 'glasses' ? await acquireGlassesStream(controller.signal)
+          : await acquireLiveCameraStream(facing, scopeId, controller.signal);
         if (!current() || !documentVisible()) { acquired.release(); return; }
         lease = acquired;
         const ended = () => cameraStopped();
@@ -164,7 +168,7 @@ export default function FaceCamera({ active, scopeId = 'live:camera', overlays, 
       lease?.release();
       if (element) element.srcObject = null;
     };
-  }, [active, visible, supported, facing, scopeId, identity]);
+  }, [active, visible, supported, facing, scopeId, device, identity]);
 
   const shown = !active || !visible ? 'Camera off'
     : !supported ? 'This browser can’t open the camera here. Use a current browser over HTTPS or localhost.' : status;
@@ -195,7 +199,7 @@ export default function FaceCamera({ active, scopeId = 'live:camera', overlays, 
     })}
     {!live && <View style={styles.status}><Icon name={active ? 'camera' : 'camera-off'} size={26} color="#BCD1D6" />
       <Text style={styles.statusText}>{shown}</Text></View>}
-    {live && cameras > 1 && <Pressable accessibilityRole="button" accessibilityLabel="Switch camera"
+    {live && cameras > 1 && device === 'phone' && <Pressable accessibilityRole="button" accessibilityLabel="Switch camera"
       onPress={() => {
         latest.current.blocked = true;
         latest.current.onCameraReset?.();

@@ -73,7 +73,7 @@ struct GlassesBar: View {
           }.disabled(!camera.registered || camera.cameraAllowed)
         }
         .buttonStyle(.bordered).font(.footnote)
-        Text("Pick Ray-Ban Meta on the conversation screen to use the glasses for the finish gesture. Face recognition always uses the iPhone camera. Frames stay on this iPhone and are never saved.")
+        Text("Pick Ray-Ban Meta in LIVE Camera (Who's here) or on the conversation screen to see through your glasses. Frames stay on this iPhone and are never saved.")
           .font(.caption).foregroundStyle(.secondary)
       }
     }

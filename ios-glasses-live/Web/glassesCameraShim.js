@@ -2,10 +2,10 @@
  * Glance Glasses Live camera bridge. Injected at document start by the iPhone
  * shell. Only getUserMedia({ video: { glanceSource: 'glasses' } }) returns the
  * live Meta glasses feed (JPEG frames pushed from native DAT code, drawn to a
- * canvas, exposed as a canvas MediaStream). The web app asks for that only on
- * the conversation screen when the user picks "Ray-Ban Meta". Every other
- * request (face registration, LIVE Camera recognition, microphone) goes to the
- * real iPhone camera/mic, so face recognition never runs on glasses video.
+ * canvas, exposed as a canvas MediaStream). The web app asks for that on Who's
+ * here (LIVE Camera) and the conversation screen when the user picks
+ * "Ray-Ban Meta". Every other request (face registration, microphone) goes to
+ * the real iPhone camera/mic.
  *
  * Native -> JS:  window.__glanceGlassesCamera.frame(base64Jpeg)
  *                window.__glanceGlassesCamera.failed(message)
@@ -19,6 +19,10 @@
 
   var FIRST_FRAME_TIMEOUT_MS = 15000;
   var STALL_TIMEOUT_MS = 4000;
+  // Keep the glasses session open briefly after the last track stops so the
+  // LIVE Camera -> conversation handoff does not restart the DAT session.
+  var HANDOFF_GRACE_MS = 3000;
+  var graceTimer = null;
   var LABEL = 'Meta glasses';
 
   var canvas = document.createElement('canvas');
@@ -46,7 +50,10 @@
     list.forEach(function (w) { if (err) w.reject(err); else w.resolve(); });
   }
 
+  function clearGrace() { if (graceTimer) clearTimeout(graceTimer); graceTimer = null; }
+
   function clearTimers() {
+    clearGrace();
     if (firstFrameTimer) clearTimeout(firstFrameTimer);
     if (stallTimer) clearInterval(stallTimer);
     firstFrameTimer = null; stallTimer = null;
@@ -103,6 +110,7 @@
   }
 
   function ensureLive() {
+    clearGrace();
     if (state === 'live') return Promise.resolve();
     var p = new Promise(function (resolve, reject) { waiters.push({ resolve: resolve, reject: reject }); });
     if (state === 'idle') {
@@ -135,7 +143,14 @@
       nativeStop();
       if (i < 0) return;
       tracks.splice(i, 1);
-      if (!tracks.length) { state = 'idle'; pending = null; clearTimers(); post('stop'); }
+      if (!tracks.length) {
+        clearGrace();
+        graceTimer = setTimeout(function () {
+          graceTimer = null;
+          if (tracks.length || state === 'idle') return;
+          state = 'idle'; pending = null; clearTimers(); post('stop');
+        }, HANDOFF_GRACE_MS);
+      }
     };
     tracks.push(track);
     return stream;

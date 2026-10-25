@@ -40,7 +40,7 @@ final class GlassesCamera: ObservableObject {
         status = !registered ? "Step 1: connect Glance to Meta AI"
           : !granted ? "Step 2: allow the glasses camera"
           : Wearables.shared.devices.isEmpty ? "Glasses not found. Turn them on and open Meta AI."
-          : "Glasses ready. Pick Ray-Ban Meta on the conversation screen."
+          : "Glasses ready. Pick Ray-Ban Meta in LIVE Camera."
       }
     }
   }
