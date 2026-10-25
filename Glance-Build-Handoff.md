@@ -44,4 +44,4 @@ Your source bundle includes the complete setup guides and `docs/VERIFICATION.md`
 
 The native builds and full two-phone flow remain untested, and the Expo toolchain still reports five high-severity entries corresponding to two underlying transitive advisories. The source contains an audit runbook; do not force-downgrade Expo to clear the report.
 
-The repository has not been pushed publicly while your publishing approval is pending. Your Mac/signing setup and glasses Developer Mode answers determine the next installation path.
+Publishing the source to [GlanceAR on GitHub](https://github.com/Sanjith0/GlanceAR) was authorized on October 25, 2026. Your Mac/signing setup and glasses Developer Mode answers still determine the native installation path.

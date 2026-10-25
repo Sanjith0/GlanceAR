@@ -76,7 +76,7 @@ These are real release gates, not cosmetic follow-ups. Do not describe the nativ
 - **Unimplemented automation:** Face identification, real-world automatic encounter discovery, continuous event recording, speech segmentation and custom temple-tap-to-connect are not implemented. The browser clearly labels the simulated encounter and gesture.
 - **Live phone pipeline:** Direct synthetic API requests passed, but native capture through a deployed Convex processor has not been exercised. Noisy-event output quality, two-speaker attribution, latency targets, provider failure cases and billing behavior remain unverified.
 - **Hosted backend:** Only an anonymous local Convex deployment was used. No hosted backend or externally reachable phone endpoint was provisioned.
-- **Distribution:** No App Store, TestFlight, public website publication, signing identity or cloud build was created. Public repository upload requires the user's approval.
+- **Distribution:** Source publication to GitHub was authorized on October 25, 2026. No App Store, TestFlight, public website publication, signing identity or cloud build was created.
 - **Production security:** Device-token accounts, retention and cancellation remain prototype mechanisms. Authentication recovery, credential rotation, account deletion, abuse controls and the unresolved dependency advisories must be addressed before public use.
 
 See `IOS-GLASSES.md` and `AUDIO-CAPTURE.md` for physical-device acceptance procedures. See `../convex/DEPENDENCY_AUDIT.md` for the current toolchain findings; the suggested force-downgrade is not a safe remediation for this SDK.
