@@ -578,7 +578,7 @@ export function ConversationScreen() {
       <Text style={s.small}>{finishing ? 'Gesture received. Safely closing the recording and confirming your connection…'
         : retrying ? 'Waiting for a confirmed connection. Detection is paused; use Retry finish if needed.'
           : conversation.status === 'consent' ? 'Your live view stays on while the recording devices get ready. Hand detection cannot finish a conversation before it starts.'
-            : 'Matching hands light up green. Both gestures end the conversation and open the same recap in your shared chat.'}</Text>
+            : 'Hold both poses to finish and open chat.'}</Text>
       {Platform.OS !== 'web' && cameraStatus ? <Text style={s.small}>{cameraStatus}</Text> : null}
     </View>}
     {conversation.status === 'recording' && <Text style={s.small}>{app.mode === 'demo'
