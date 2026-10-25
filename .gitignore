@@ -46,3 +46,6 @@ qa/
 # generated native folders
 /ios
 /android
+
+# face-api weights, copied from node_modules by scripts/copy-face-models.mjs
+public/models/

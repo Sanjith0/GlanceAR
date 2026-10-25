@@ -1,7 +1,8 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import type { GlanceDataClient, ProfileInput, Snapshot } from './domain';
+import type { FaceDirectory, GlanceDataClient, ProfileInput, SightingResult, Snapshot } from './domain';
+import { FACE_MODEL, FACE_SCAN_POLICY_VERSION, SIGHTING_WINDOW_MS } from './domain';
 import { createGlanceClient } from './data/convexClient';
-import { createDemoEncounter, demoReducer, demoSnapshot, initialDemo, type DemoAction } from './demo';
+import { createDemoEncounter, demoFaceDirectory, demoReducer, demoSnapshot, initialDemo, type DemoAction } from './demo';
 import { getDeviceToken } from './session';
 import { isAudioCaptureAvailable, requestAudioPermission } from './capture/audio';
 import { requestGestureCameraPermission } from './capture/GestureCapture';
@@ -35,6 +36,12 @@ interface GlanceState {
   phoneCaptureReady: boolean;
   preparePhoneCapture: () => Promise<void>;
   captureChoiceLocked: boolean;
+  /** Live mode saves only your own scan; the preview may scan any of its attendees. */
+  saveFaceScan: (profileId: string, descriptors: number[][]) => Promise<void>;
+  deleteFaceScan: (profileId: string) => Promise<void>;
+  addDemoPerson: (eventId: string, name: string, role: string, photoUrl: string) => string;
+  reportSighting: (eventId: string, personId: string) => Promise<SightingResult>;
+  demoFaceDirectory: (eventId: string) => FaceDirectory;
 }
 const Context = createContext<GlanceState | null>(null);
 export function GlanceProvider({ children }: { children: React.ReactNode }) {
@@ -170,6 +177,33 @@ export function GlanceProvider({ children }: { children: React.ReactNode }) {
       conversationId: id, senderId: sample.actor, text: value, createdAt: Date.now(),
     } });
   };
+  const saveFaceScan = async (profileId: string, descriptors: number[][]) => {
+    if (mode === 'demo') { dispatch({ type: 'faceScan', profileId, descriptors }); return; }
+    if (profileId !== liveSnapshot?.me.id) throw new Error('You can only add your own face scan.');
+    await client!.saveFaceScan(token, { model: FACE_MODEL, descriptors, policyVersion: FACE_SCAN_POLICY_VERSION });
+  };
+  const deleteFaceScan = async (profileId: string) => {
+    if (mode === 'demo') dispatch({ type: 'faceScanDelete', profileId });
+    else await client!.deleteFaceScan(token);
+  };
+  const addDemoPerson = (eventId: string, name: string, role: string, photoUrl: string) => {
+    const id = `person-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    dispatch({ type: 'addPerson', eventId, profile: { id, name: name.trim(), role: role.trim(), photoUrl } });
+    return id;
+  };
+  // The preview has no second phone, so the other person's recognition of you is
+  // simulated: it "arrives" a moment after your camera first steadily sees them.
+  const demoSightings = useRef(new Map<string, { first: number; last: number }>());
+  const reportSighting = async (eventId: string, personId: string): Promise<SightingResult> => {
+    if (mode === 'live') return client!.reportSighting(token, eventId, personId, captureSource);
+    const key = `${sample.actor}:${eventId}:${personId}`, now = Date.now();
+    const seen = demoSightings.current.get(key);
+    const first = seen && now - seen.last < SIGHTING_WINDOW_MS ? seen.first : now;
+    demoSightings.current.set(key, { first, last: now });
+    if (now - first < 1_500) return { status: 'waiting' };
+    demoSightings.current.delete(key);
+    return { status: 'paired', conversationId: await pair(eventId, personId) };
+  };
   const snapshot = mode === 'demo' ? demoSnapshot(sample, selectedEvent) : liveSnapshot;
   const captureChoiceLocked = pairing || Boolean(snapshot?.activeRecorderConversationId);
   const setCaptureSource = (source: 'phone' | 'glasses') => {
@@ -182,10 +216,26 @@ export function GlanceProvider({ children }: { children: React.ReactNode }) {
     token, client, switchActor: id => dispatch({ type: 'actor', id }), demo: dispatch,
     run, refresh, saveProfile, createEvent, joinEvent, pair, setEventPermission, finishConnection, sendMessage,
     captureSource, setCaptureSource, phoneCaptureReady, preparePhoneCapture, captureChoiceLocked,
+    saveFaceScan, deleteFaceScan, addDemoPerson, reportSighting,
+    demoFaceDirectory: eventId => demoFaceDirectory(sample, eventId),
   }}>{children}</Context.Provider>;
 }
 export function useGlance(): GlanceState {
   const context = useContext(Context);
   if (!context) throw new Error('GlanceProvider is missing.');
   return context;
+}
+/** Subscribe only while a camera screen needs it; live templates never sit in the global snapshot. */
+export function useFaceDirectory(eventId: string | undefined): { directory: FaceDirectory | null; error: string } {
+  const { mode, client, token, demoFaceDirectory: demoDirectory } = useGlance();
+  // Results are tagged with their subscription so a changed event never shows stale faces.
+  const key = mode === 'live' && client && token && eventId ? `${token}:${eventId}` : '';
+  const [live, setLive] = useState<{ key: string; directory: FaceDirectory | null; error: string }>({ key: '', directory: null, error: '' });
+  useEffect(() => {
+    if (!key || !client || !eventId) return;
+    return client.subscribeFaceDirectory(token, eventId, directory => setLive({ key, directory, error: '' }),
+      e => setLive(old => ({ key, directory: old.key === key ? old.directory : null, error: e.message })));
+  }, [key, client, token, eventId]);
+  if (mode === 'demo') return { directory: eventId ? demoDirectory(eventId) : null, error: '' };
+  return live.key === key ? { directory: live.directory, error: live.error } : { directory: null, error: '' };
 }

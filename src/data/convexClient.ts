@@ -1,6 +1,6 @@
 import { ConvexReactClient } from "convex/react";
 import { anyApi, type FunctionReference } from "convex/server";
-import type { GlanceDataClient, Snapshot, PresenceTicket, RecordingLease } from "../domain";
+import type { FaceDirectory, GlanceDataClient, Snapshot, PresenceTicket, RecordingLease } from "../domain";
 
 /** Callers own SecureStore and local microphone/files. Never include token in logs. */
 export function createGlanceClient(url: string): GlanceDataClient {
@@ -52,6 +52,24 @@ export function createGlanceClient(url: string): GlanceDataClient {
     retryProcessing: (token, id) => session("retryProcessing", token, id),
     cancel: (token, id) => session("cancel", token, id),
     deleteConversation: (token, id) => session("deleteConversation", token, id),
+    saveFaceScan: (token, scan) => mutate("saveFaceScan", { token, ...scan }),
+    deleteFaceScan: (token) => mutate("deleteFaceScan", { token }),
+    subscribeFaceDirectory: (token, eventId, onValue, onError) => {
+      const watch = client.watchQuery(anyApi.glance.faceDirectory, { token, eventId });
+      const notify = () => {
+        try {
+          const value: FaceDirectory | undefined = watch.localQueryResult();
+          if (value) onValue(value);
+        } catch (error) {
+          onError?.(error instanceof Error ? error : new Error("Face directory sync failed."));
+        }
+      };
+      const unsubscribe = watch.onUpdate(notify);
+      notify();
+      return unsubscribe;
+    },
+    reportSighting: (token, eventId, seenId, source) =>
+      mutate("reportSighting", { token, eventId, seenId, ...(source ? { source } : {}) }),
     close: () => client.close(),
   };
 }

@@ -18,7 +18,7 @@ The private harness setup uses one JSON value, with an explicit reveal and Copy 
 
 Open the [updated private Glance preview](https://www.perplexity.ai/computer/a/glance-Eek5EOQRQBKYzYNttRBsVQ); refresh it if an earlier revision is already open. Choose **Enter event** and the sample encounter starts automatically, then **Simulate three-finger gesture** to go straight into the shared chat, with no Start or additional connection-confirmation step.
 
-Send a message and switch between the Alex/Sam preview controls to see both sides. Each perspective receives the same sample recap with the other person's portrait, and **Simulate next encounter** creates a new segment when you return to the event. The preview does not record, recognize faces, transcribe or contact a real attendee; reloading resets its state.
+Send a message and switch between the Alex/Sam preview controls to see both sides. Each perspective receives the same sample recap with the other person's portrait, and **Simulate next encounter** creates a new segment when you return to the event. The preview does not record, transcribe or contact a real attendee; reloading resets its state. **LIVE Camera** (on an enabled event) uses your camera for on-device face recognition of people you scan in that tab; see the README's LIVE Camera section.
 
 ## Bring it onto your iPhone
 
@@ -35,7 +35,7 @@ Your source bundle includes the complete setup guides and `docs/VERIFICATION.md`
 
 - **Permission once at entry:** Each attendee enables recording and automatic sharing for that event. Taking a portrait alone does not silently grant permission.
 - **Gesture directly opens chat:** Either attendee's authorized finish signal connects and shares under the two standing event permissions. There is no second approval screen, and two hand poses are not biometric proof.
-- **Recognition remains a gap:** The preview simulates the encounter; real capture uses selected-profile pairing. Actual face identification, always-on speech detection and automatic real-world conversation segmentation are not implemented.
+- **Recognition is browser-only so far:** LIVE Camera recognizes opted-in face scans in the browser, and the backend pairs two attendees once both cameras recognize each other. The iPhone app needs a native port of the same model; always-on speech detection and automatic conversation segmentation are not implemented.
 - **Keep an explicit Stop button:** Either person may request a stop, but remote delivery depends on connectivity. The recording device uses short-lived native consent leases as a fallback.
 - **Keep the hardware claim narrow:** The glasses client uses glasses video plus the phone microphone because Meta documents wearer-focused HFP beamforming and development/beta restrictions for ambient in-stream audio ([Meta audio guide](https://wearables.developer.meta.com/docs/develop/dat/microphones-and-speakers/)).
 - **No custom temple-tap finish:** Use the phone fallback button until the exact glasses hardware and input channel have been tested. Sensor-based face identification also needs prior Meta approval, even for unpublished apps ([Meta acceptable-use policy](https://wearables.developer.meta.com/acceptable-use-policy)).

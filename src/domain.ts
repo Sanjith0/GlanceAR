@@ -100,6 +100,34 @@ export interface PresenceTicket {
   expiresAt: number;
 }
 
+/** One opted-in attendee's face templates. Never derived from the profile portrait. */
+export interface FaceTemplate {
+  profileId: string;
+  descriptors: number[][];
+}
+
+export interface FaceDirectory {
+  model: string;
+  /** False when the viewer has not enabled Glance for this event; templates are then withheld. */
+  enabled: boolean;
+  /** Whether the viewer has a saved face scan others can recognize. */
+  scanned: boolean;
+  /** Enabled event members with a face scan, including the viewer (shown as "You"). */
+  templates: FaceTemplate[];
+}
+
+export interface FaceScanInput {
+  model: string;
+  descriptors: number[][];
+  policyVersion: string;
+}
+
+export interface SightingResult {
+  /** waiting: the other phone has not recognized you yet. busy: someone is already in a conversation. */
+  status: "waiting" | "paired" | "busy";
+  conversationId?: string;
+}
+
 export interface StopResult {
   status: ConversationStatus;
   /** Explicit null means this stop won before any connection and future finish is closed. */
@@ -155,6 +183,22 @@ export interface GlanceDataClient {
   retryProcessing(token: string, conversationId: string): Promise<void>;
   cancel(token: string, conversationId: string): Promise<void>;
   deleteConversation(token: string, conversationId: string): Promise<void>;
+  saveFaceScan(token: string, scan: FaceScanInput): Promise<void>;
+  deleteFaceScan(token: string): Promise<void>;
+  /** Reactive: re-delivers whenever an attendee joins, enables, pauses, scans, or deletes a scan. */
+  subscribeFaceDirectory(
+    token: string,
+    eventId: string,
+    onValue: (directory: FaceDirectory) => void,
+    onError?: (error: Error) => void,
+  ): () => void;
+  /** "I recognize this attendee." Pairs automatically once both phones report each other. */
+  reportSighting(
+    token: string,
+    eventId: string,
+    seenId: string,
+    source?: "phone" | "glasses",
+  ): Promise<SightingResult>;
   close(): Promise<void>;
 }
 
@@ -162,3 +206,13 @@ export const RECORDING_FRESHNESS_MS = 5_000;
 export const MAX_RECORDING_MS = 10 * 60_000;
 export const RAW_AUDIO_RETENTION_MS = 15 * 60_000;
 export const EVENT_PERMISSION_POLICY_VERSION = "glance-event-v1";
+export const FACE_SCAN_POLICY_VERSION = "glance-face-v1";
+/** face-api.js ResNet-34 descriptor (dlib port). Templates from another model never match. */
+export const FACE_MODEL = "face-api-resnet128-v1";
+export const FACE_DESCRIPTOR_LENGTH = 128;
+export const FACE_SCAN_SAMPLES = 3;
+/** Both phones must recognize each other within this window to pair. */
+export const SIGHTING_WINDOW_MS = 8_000;
+export const SIGHTING_REPORT_INTERVAL_MS = 1_000;
+/** The preview's fictional face database cap. */
+export const DEMO_FACE_LIMIT = 5;

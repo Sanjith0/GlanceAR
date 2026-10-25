@@ -12,7 +12,7 @@ import { useConversationCapture } from './useConversationCapture';
 import GestureCapture, { copyPrivateSetupJSON } from './capture/GestureCapture';
 import { ConversationChat } from './ConversationChat';
 
-function useScreenFocused() {
+export function useScreenFocused() {
   const [focused, setFocused] = useState(false);
   useFocusEffect(useCallback(() => {
     setFocused(true);
@@ -20,7 +20,7 @@ function useScreenFocused() {
   }, []));
   return focused;
 }
-function useOperation() {
+export function useOperation() {
   const { run } = useGlance();
   const [busy, setBusy] = useState(false);
   const running = useRef(false);
@@ -33,7 +33,7 @@ function useOperation() {
   }, [run]);
   return { busy, perform };
 }
-function GlobalStatus() {
+export function GlobalStatus() {
   const app = useGlance();
   return <>
     {app.error ? <View style={[s.status, s.error, s.row]}>
@@ -47,7 +47,7 @@ function GlobalStatus() {
       <Button onPress={() => router.push('/enroll')} icon="user-plus">Create your profile</Button></View>}
   </>;
 }
-function DemoBanner({ actors = false }: { actors?: boolean }) {
+export function DemoBanner({ actors = false }: { actors?: boolean }) {
   const { mode, snapshot, switchActor } = useGlance();
   if (mode !== 'demo') return null;
   return <View style={{ gap: 10 }}>
@@ -224,7 +224,8 @@ export function EventScreen() {
         <View style={s.between}><Text style={s.heading}>{enabled ? 'Glance is on.' : 'Be present. We’ll keep the details.'}</Text><Icon name={enabled ? 'radio' : 'mic'} color={colors.blue} /></View>
         <Text style={s.muted}>{enabled ? 'Ready for your next conversation. No Start button, and no extra confirmation at the end.' : 'Enable Glance once for this event, then let the conversations happen.'}</Text>
         <Text style={s.small}>Enabling Glance permits recording your paired conversations with other enabled attendees. Either participant’s finish gesture or Finish &amp; connect button creates the connection and shares both portraits, a chat, and the same recap. Audio is sent to Meta’s model API to prepare the recap. You can pause Glance or stop without sharing at any time.</Text>
-        {app.mode === 'demo' && <Text style={[s.small, { color: colors.blue }]}>Permissions here apply only to fictional sample attendees. Encounters and gestures are simulated; no camera or microphone is active.</Text>}
+        {app.mode === 'demo' && <Text style={[s.small, { color: colors.blue }]}>Permissions here apply only to fictional sample attendees. Encounters and gestures are simulated and no microphone is active. LIVE Camera uses your real camera, on this device only.</Text>}
+        {enabled && <Button icon="camera" onPress={() => router.push(`/live/${id}`)}>LIVE Camera</Button>}
         {enabled
           ? <Button tone="secondary" icon="pause" busy={busy} onPress={() => void perform(() => app.setEventPermission(id, false))}>Pause Glance for this event</Button>
           : <Button icon="check" busy={busy} onPress={() => void perform(enable)}>Enable Glance for this event</Button>}
@@ -241,7 +242,7 @@ export function EventScreen() {
       <View style={[s.soft, s.between]}><View style={{ gap: 4 }}><Text style={s.small}>INVITE A FRIEND</Text><Text selectable style={[s.heading, { letterSpacing: 2 }]}>{event.inviteCode}</Text></View><Icon name="key" color={colors.blue} /></View>
       <View style={s.divider} />
       <Text style={s.heading}>People in the room</Text>
-      <Text style={s.muted}>{app.mode === 'demo' ? 'The preview pairs the sample profiles for you. Come back here to try another encounter.' : 'Face discovery is not implemented in this build. Check the portrait together and select a profile as the prototype fallback.'}</Text>
+      <Text style={s.muted}>{app.mode === 'demo' ? 'The preview pairs the sample profiles for you. Come back here to try another encounter, or open LIVE Camera to recognize people you scan.' : 'Open LIVE Camera to recognize attendees who added a face scan. Selecting a profile below remains the fallback.'}</Text>
       {members.map(person => <View key={person.id} style={s.card}><PersonRow person={person} label={person.glanceEnabled ? 'Glance enabled for this event' : 'Glance is paused'} />
         <Button busy={busy} disabled={!enabled || !person.glanceEnabled || !captureReady || (app.mode === 'live' && Platform.OS === 'web')}
           tone="secondary" icon="message-circle" onPress={() => void perform(() => pair(person.id))}>{app.mode === 'demo' ? 'Simulate next encounter' : `Pair with ${person.name.split(' ')[0]}`}</Button>
@@ -277,7 +278,7 @@ export function ProfileScreen() {
     </View>}
     <Text style={s.heading}>Presence, with permission.</Text>
     {[
-      { icon: 'image' as const, title: 'A portrait, not a biometric ID', text: 'Your event profile shows your photo. Glance does not match faces or identify people from a camera feed.' },
+      { icon: 'image' as const, title: 'Your portrait, plus an optional face scan', text: 'Your portrait is never used for matching. If you add a face scan in LIVE Camera, attendees of events where you turn Glance on can recognize you. You can delete it any time; faces without a scan are never identified.' },
       { icon: 'mic' as const, title: 'Permission once, at event entry', text: 'Each attendee enables recording and automatic connection sharing for that event. Either person’s finish signal connects you under those standing permissions, without another approval screen.' },
       { icon: 'stop-circle' as const, title: 'Finish and connect, or just stop', text: 'The finish gesture or Finish & connect button opens your chat. Stop without sharing does not create a connection. Remote stopping depends on connectivity; a short native consent lease is the fallback.' },
     ].map(item => <View key={item.title} style={[s.row, { alignItems: 'flex-start' }]}><View style={{ padding: 10, backgroundColor: colors.blueLight, borderRadius: 12 }}><Icon name={item.icon} color={colors.blue} /></View>

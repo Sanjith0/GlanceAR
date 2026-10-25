@@ -3,7 +3,7 @@ import { v } from "convex/values";
 import { internalMutation, internalQuery, type Doc, type QueryCtx } from "./server";
 import { participants, purgeAudio, clearPresenceTickets, clearMessages, currentEventGrants, revokeEventConversations } from "./glance";
 import { recapValidator } from "./schema";
-import { MAX_RECORDING_MS, RAW_AUDIO_RETENTION_MS } from "../src/domain";
+import { MAX_RECORDING_MS, RAW_AUDIO_RETENTION_MS, SIGHTING_WINDOW_MS } from "../src/domain";
 
 const jobArgs = { conversationId: v.id("conversations"), generation: v.number() };
 async function ready(ctx: QueryCtx, c: Doc<"conversations"> | null, generation: number) {
@@ -97,6 +97,11 @@ export const sweep = internalMutation({
       .withIndex("by_expiry", (q) => q.lte("expiresAt", Date.now())).take(100);
     for (const ticket of tickets) await ctx.db.delete(ticket._id);
     if (tickets.length === 100) await ctx.scheduler.runAfter(0, anyApi.jobs.sweep, {});
+    // Stale recognition claims can never pair; keep the table to recent sightings only.
+    const sightings = await ctx.db.query("sightings")
+      .withIndex("by_seen_at", (q) => q.lt("seenAt", Date.now() - SIGHTING_WINDOW_MS)).take(100);
+    for (const sighting of sightings) await ctx.db.delete(sighting._id);
+    if (sightings.length === 100) await ctx.scheduler.runAfter(0, anyApi.jobs.sweep, {});
     // Uploaded but unattached objects are swept too. No storage download URLs are public.
     const files = await ctx.db.system.query("_storage")
       .withIndex("by_creation_time", (q) => q.lt("_creationTime", Date.now() - RAW_AUDIO_RETENTION_MS))

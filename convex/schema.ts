@@ -81,6 +81,26 @@ export default defineSchema({
     text: v.string(),
     createdAt: v.number(),
   }).index("by_conversation", ["conversationId"]),
+  // Opt-in face scan, separate from the portrait. Shared only with members of
+  // events where both the owner and the viewer have Glance enabled.
+  faceTemplates: defineTable({
+    profileId: v.id("profiles"),
+    model: v.string(),
+    descriptors: v.array(v.array(v.float64())),
+    policyVersion: v.string(),
+    consentedAt: v.number(),
+  }).index("by_profile", ["profileId"]),
+  // "observer's camera recognized seen" claims. Short-lived; two opposite fresh rows pair.
+  sightings: defineTable({
+    eventId: v.id("events"),
+    observerId: v.id("profiles"),
+    seenId: v.id("profiles"),
+    seenAt: v.number(),
+  })
+    .index("by_pair", ["eventId", "observerId", "seenId"])
+    .index("by_observer", ["observerId"])
+    .index("by_seen", ["seenId"])
+    .index("by_seen_at", ["seenAt"]),
   presenceTickets: defineTable({
     conversationId: v.id("conversations"),
     profileId: v.id("profiles"),

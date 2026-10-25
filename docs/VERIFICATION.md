@@ -1,5 +1,22 @@
 # Glance verification record
 
+## LIVE Camera face recognition — October 25, 2026
+
+Checked on macOS (arm64) with Node 20.18.0, below the project's declared Node ≥22.13 engine; rerun under Node 24 before relying on these results. No Convex deployment exists, so live multi-device sync is verified through `convex-test`, not real phones.
+
+| Check | Result | Boundary |
+| --- | --- | --- |
+| `npm run typecheck`, `npx tsc -p convex/tsconfig.json --noEmit`, `npm run lint` | Passed | |
+| `npm test` | Passed | 176 Vitest tests (16 new) and 19 source-contract checks |
+| `npm run build:web` | Passed | face-api in its own 1.3 MB lazy chunk; weights at `models/face-api/` |
+| iOS JavaScript export | Passed | No face-api code in the iOS bundle; LIVE Camera shows the native placeholder |
+| Browser end-to-end, 15 checks | Passed | Headless Chrome, fake camera drawn from the two fictional sample portraits |
+
+- **Backend (`tests/backendFace.test.ts`):** scan validation (model, consent version, shape); directory sync across scan, join, enable, pause, rescan and delete, with every synced template still identifying its owner and rejecting a stranger; templates withheld from non-enabled viewers and non-members; pairing only after both directions within the window; one conversation under a race; stale sightings never pair and are swept; scan deletion withdraws pending sightings.
+- **Matching (`tests/face.test.ts`):** five enrolled people identified and strangers rejected using synthetic descriptors; ambiguous near-duplicates refused; scan consistency; stability gate; overlay projection with mirroring; talking points; preview five-person cap.
+- **Browser:** scan in about 1.6 seconds including model load; name, box and talking points; simulated mutual recognition opens the existing conversation, the finish gesture opens chat, and Back lands on the event; camera tracks stopped after leaving, microphone never requested; "You" and "Not registered" labels; duplicate-face refusal; recognition with two faces in frame; no page errors.
+- **Not verified:** real webcams, lighting, distance and angles; discrimination across many real people (only two fictional portraits and synthetic vectors were tested); two physical devices against a deployed backend; phone browsers; a native iPhone implementation (none exists yet).
+
 Checked on October 24, 2026, in a Linux environment using Node 24.22.1. This record separates executable application checks, limited live API tests and native-source review; it does not certify a signed iPhone build, glasses hardware or a deployed end-to-end phone product.
 
 ## Checks completed

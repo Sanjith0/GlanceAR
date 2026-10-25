@@ -3,8 +3,12 @@ import { v, ConvexError } from "convex/values";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { query, mutation, type QueryCtx, type MutationCtx, type Doc, type Id } from "./server";
-import { MAX_RECORDING_MS, RAW_AUDIO_RETENTION_MS, RECORDING_FRESHNESS_MS, EVENT_PERMISSION_POLICY_VERSION } from "../src/domain";
-import type { Profile, Event, Conversation, Snapshot } from "../src/domain";
+import {
+  MAX_RECORDING_MS, RAW_AUDIO_RETENTION_MS, RECORDING_FRESHNESS_MS, EVENT_PERMISSION_POLICY_VERSION,
+  FACE_MODEL, FACE_SCAN_POLICY_VERSION, SIGHTING_WINDOW_MS,
+} from "../src/domain";
+import type { Profile, Event, Conversation, Snapshot, FaceDirectory, SightingResult } from "../src/domain";
+import { compactDescriptor, validDescriptors } from "../src/face";
 
 const authArgs = { token: v.string() };
 const sessionArgs = { ...authArgs, conversationId: v.id("conversations") };
@@ -298,22 +302,128 @@ export const createConversation = mutation({
       fail("Both attendees must opt in to event recording and gesture sharing.");
     }
     for (const id of [me._id, args.partnerId]) {
-      const all = [
-        ...await ctx.db.query("conversations").withIndex("by_a", (q) => q.eq("participantA", id)).order("desc").take(100),
-        ...await ctx.db.query("conversations").withIndex("by_b", (q) => q.eq("participantB", id)).order("desc").take(100),
-      ];
-      if (all.some((c) => c.status === "recording" || c.status === "consent")) fail("An attendee already has an active pairing.");
+      if (await activePairing(ctx, id)) fail("An attendee already has an active pairing.");
     }
-    const conversationId = await ctx.db.insert("conversations", {
-      eventId: args.eventId, participantA: me._id, participantB: args.partnerId, recorderId: me._id,
-      status: "consent", recordingConsent: args.mode === "event" ? [me._id, args.partnerId] : [],
-      exchangeConsent: [], lastSeen: {}, ticketIssuedAt: {}, generation: 0,
-      consentMode: args.mode ?? "conversation",
-      ...(args.source || args.mode === "event" ? { captureSource: args.source ?? "phone" } : {}),
-      ...(args.mode === "event" ? { eventGrantA: own.eventPermission!.revision, eventGrantB: other.eventPermission!.revision } : {}),
-    });
-    await ctx.scheduler.runAfter(120_000, anyApi.jobs.expireConsent, { conversationId });
-    return conversationId;
+    return insertConversation(ctx, args.eventId, own, other, args.mode, args.source);
+  },
+});
+async function activePairing(ctx: QueryCtx, id: Id<"profiles">) {
+  const all = [
+    ...await ctx.db.query("conversations").withIndex("by_a", (q) => q.eq("participantA", id)).order("desc").take(100),
+    ...await ctx.db.query("conversations").withIndex("by_b", (q) => q.eq("participantB", id)).order("desc").take(100),
+  ];
+  return all.find((c) => c.status === "recording" || c.status === "consent") ?? null;
+}
+/** `own` is the recorder's membership. Callers check membership, grants, and active pairings. */
+async function insertConversation(
+  ctx: MutationCtx, eventId: Id<"events">, own: Doc<"memberships">, other: Doc<"memberships">,
+  mode: "event" | undefined, source: "phone" | "glasses" | undefined,
+) {
+  const conversationId = await ctx.db.insert("conversations", {
+    eventId, participantA: own.profileId, participantB: other.profileId, recorderId: own.profileId,
+    status: "consent", recordingConsent: mode === "event" ? [own.profileId, other.profileId] : [],
+    exchangeConsent: [], lastSeen: {}, ticketIssuedAt: {}, generation: 0,
+    consentMode: mode ?? "conversation",
+    ...(source || mode === "event" ? { captureSource: source ?? "phone" } : {}),
+    ...(mode === "event" ? { eventGrantA: own.eventPermission!.revision, eventGrantB: other.eventPermission!.revision } : {}),
+  });
+  await ctx.scheduler.runAfter(120_000, anyApi.jobs.expireConsent, { conversationId });
+  return conversationId;
+}
+async function faceTemplate(ctx: QueryCtx, profileId: Id<"profiles">) {
+  const row = await ctx.db.query("faceTemplates").withIndex("by_profile", (q) => q.eq("profileId", profileId)).unique();
+  return row && row.model === FACE_MODEL && row.policyVersion === FACE_SCAN_POLICY_VERSION ? row : null;
+}
+async function clearSightings(ctx: MutationCtx, profileId: Id<"profiles">) {
+  const rows = [
+    ...await ctx.db.query("sightings").withIndex("by_observer", (q) => q.eq("observerId", profileId)).take(100),
+    ...await ctx.db.query("sightings").withIndex("by_seen", (q) => q.eq("seenId", profileId)).take(100),
+  ];
+  for (const row of rows) await ctx.db.delete(row._id);
+}
+export const saveFaceScan = mutation({
+  args: { ...authArgs, model: v.string(), descriptors: v.array(v.array(v.float64())), policyVersion: v.string() },
+  handler: async (ctx, args) => {
+    const me = await authenticate(ctx, args.token);
+    if (args.model !== FACE_MODEL) fail("This face scan came from an unsupported model. Update Glance and scan again.");
+    if (args.policyVersion !== FACE_SCAN_POLICY_VERSION) fail("Review and accept the current face scan terms.");
+    if (!validDescriptors(args.descriptors)) fail("That face scan is incomplete. Try scanning again.");
+    const value = {
+      model: args.model, descriptors: args.descriptors.map(compactDescriptor),
+      policyVersion: args.policyVersion, consentedAt: Date.now(),
+    };
+    const existing = await ctx.db.query("faceTemplates").withIndex("by_profile", (q) => q.eq("profileId", me._id)).unique();
+    if (existing) await ctx.db.patch(existing._id, value);
+    else await ctx.db.insert("faceTemplates", { profileId: me._id, ...value });
+  },
+});
+export const deleteFaceScan = mutation({
+  args: authArgs,
+  handler: async (ctx, args) => {
+    const me = await authenticate(ctx, args.token);
+    const existing = await ctx.db.query("faceTemplates").withIndex("by_profile", (q) => q.eq("profileId", me._id)).unique();
+    if (existing) await ctx.db.delete(existing._id);
+    await clearSightings(ctx, me._id);
+  },
+});
+/**
+ * The event's recognizable faces. Reactive, so every open LIVE Camera re-syncs as
+ * soon as anyone joins, enables, pauses, rescans or deletes. Withheld entirely
+ * unless the viewer has Glance enabled for this event themselves.
+ */
+export const faceDirectory = query({
+  args: { ...authArgs, eventId: v.id("events") },
+  handler: async (ctx, args): Promise<FaceDirectory> => {
+    const me = await authenticate(ctx, args.token);
+    const own = await member(ctx, args.eventId, me._id);
+    const scanned = (await faceTemplate(ctx, me._id)) !== null;
+    if (!enabled(own)) return { model: FACE_MODEL, enabled: false, scanned, templates: [] };
+    const members = await ctx.db.query("memberships").withIndex("by_event", (q) => q.eq("eventId", args.eventId)).take(24);
+    const templates = await Promise.all(members.filter(enabled).map(async (m) => {
+      const row = await faceTemplate(ctx, m.profileId);
+      return row ? { profileId: m.profileId as string, descriptors: row.descriptors } : null;
+    }));
+    return { model: FACE_MODEL, enabled: true, scanned, templates: templates.filter((t) => t !== null) };
+  },
+});
+export const reportSighting = mutation({
+  args: {
+    ...authArgs, eventId: v.id("events"), seenId: v.id("profiles"),
+    source: v.optional(v.union(v.literal("phone"), v.literal("glasses"))),
+  },
+  handler: async (ctx, args): Promise<SightingResult> => {
+    const me = await authenticate(ctx, args.token);
+    if (me._id === args.seenId) fail("That’s your own face scan.");
+    const own = await member(ctx, args.eventId, me._id);
+    const other = await member(ctx, args.eventId, args.seenId);
+    if (!enabled(own) || !enabled(other)) fail("Both attendees need Glance on for this event.");
+    if (!await faceTemplate(ctx, args.seenId)) fail("This attendee no longer has a face scan.");
+    if (!await faceTemplate(ctx, me._id)) fail("Add your own face scan so they can recognize you too.");
+    // Mutations serialize, so two simultaneous mutual reports create one conversation;
+    // the later one finds it here and both phones open the same conversation. Nobody
+    // queues sightings while already in a conversation.
+    for (const id of [me._id, args.seenId]) {
+      const active = await activePairing(ctx, id);
+      if (active) {
+        const together = [active.participantA, active.participantB].includes(id === me._id ? args.seenId : me._id);
+        return { status: "busy", ...(together ? { conversationId: active._id } : {}) };
+      }
+    }
+    const now = Date.now();
+    const mine = await ctx.db.query("sightings").withIndex("by_pair", (q) =>
+      q.eq("eventId", args.eventId).eq("observerId", me._id).eq("seenId", args.seenId)).unique();
+    if (mine) await ctx.db.patch(mine._id, { seenAt: now });
+    const theirs = await ctx.db.query("sightings").withIndex("by_pair", (q) =>
+      q.eq("eventId", args.eventId).eq("observerId", args.seenId).eq("seenId", me._id)).unique();
+    if (!theirs || theirs.seenAt <= now - SIGHTING_WINDOW_MS) {
+      if (!mine) await ctx.db.insert("sightings", { eventId: args.eventId, observerId: me._id, seenId: args.seenId, seenAt: now });
+      return { status: "waiting" };
+    }
+    // Fresh sightings are required for every new encounter between the same pair.
+    if (mine) await ctx.db.delete(mine._id);
+    await ctx.db.delete(theirs._id);
+    const conversationId = await insertConversation(ctx, args.eventId, own, other, "event", args.source);
+    return { status: "paired", conversationId };
   },
 });
 export const consentRecording = mutation({

@@ -1,6 +1,7 @@
 import portraits from '../assets/demo-portraits.json';
-import type { ChatMessage, Conversation, Event, Profile, Recap, Snapshot } from './domain';
-import { EVENT_PERMISSION_POLICY_VERSION } from './domain';
+import type { ChatMessage, Conversation, Event, FaceDirectory, Profile, Recap, Snapshot } from './domain';
+import { DEMO_FACE_LIMIT, EVENT_PERMISSION_POLICY_VERSION, FACE_MODEL } from './domain';
+import { compactDescriptor, validDescriptors } from './face';
 
 export const samplePeople: Profile[] = [
   { id: 'alex', name: 'Alex Chen', role: 'Builder · human-centered AI', photoUrl: portraits.alex },
@@ -20,13 +21,15 @@ export interface DemoState {
   /** Fictional attendees' event-entry permissions, never a grant for a real account. */
   eventPermissions: Record<string, string[]>;
   conversations: Conversation[];
+  /** Face scans taken in this tab. Memory only; a reload erases them. */
+  faceScans: Record<string, number[][]>;
 }
 export function initialDemo(): DemoState {
   return {
     actor: 'alex', people: [...samplePeople],
     events: [{ id: 'builders', title: 'Builders, after hours', location: 'The studio · Demo event', inviteCode: 'GLANCE2026', hostId: 'alex' }],
     memberships: { builders: ['alex', 'sam'] },
-    eventPermissions: { builders: ['alex', 'sam'] }, conversations: [],
+    eventPermissions: { builders: ['alex', 'sam'] }, conversations: [], faceScans: {},
   };
 }
 export type DemoAction =
@@ -38,6 +41,10 @@ export type DemoAction =
   | { type: 'pair'; conversation: Conversation }
   | { type: 'finish'; id: string; method: 'gesture' | 'button' }
   | { type: 'message'; id: string; message: ChatMessage }
+  /** A preview attendee for someone physically present; joins with Glance enabled. */
+  | { type: 'addPerson'; eventId: string; profile: Profile }
+  | { type: 'faceScan'; profileId: string; descriptors: number[][] }
+  | { type: 'faceScanDelete'; profileId: string }
   | { type: 'consent' | 'start' | 'stop' | 'exchange' | 'cancel' | 'delete'; id: string };
 
 /** A visibly labelled in-memory walkthrough. This reducer never records or calls an AI. */
@@ -45,6 +52,24 @@ export function demoReducer(state: DemoState, action: DemoAction): DemoState {
   if (action.type === 'actor') return state.people.some(p => p.id === action.id) ? { ...state, actor: action.id } : state;
   if (action.type === 'profile') return { ...state, people: state.people.map(p => p.id === action.profile.id ? action.profile : p) };
   if (action.type === 'event') return { ...state, events: [...state.events, action.event], memberships: { ...state.memberships, [action.event.id]: [state.actor] } };
+  if (action.type === 'addPerson') {
+    const members = state.memberships[action.eventId];
+    if (!members?.includes(state.actor) || members.length >= DEMO_FACE_LIMIT
+      || state.people.some(p => p.id === action.profile.id) || !action.profile.name.trim()) return state;
+    return {
+      ...state, people: [...state.people, action.profile],
+      memberships: { ...state.memberships, [action.eventId]: [...members, action.profile.id] },
+      eventPermissions: { ...state.eventPermissions, [action.eventId]: [...(state.eventPermissions[action.eventId] ?? []), action.profile.id] },
+    };
+  }
+  if (action.type === 'faceScan') {
+    if (!state.people.some(p => p.id === action.profileId) || !validDescriptors(action.descriptors)) return state;
+    return { ...state, faceScans: { ...state.faceScans, [action.profileId]: action.descriptors.map(compactDescriptor) } };
+  }
+  if (action.type === 'faceScanDelete') {
+    const { [action.profileId]: _removed, ...faceScans } = state.faceScans;
+    return { ...state, faceScans };
+  }
   if (action.type === 'join') return { ...state, memberships: { ...state.memberships, [action.eventId]: [...new Set([...(state.memberships[action.eventId] ?? []), state.actor])] } };
   if (action.type === 'eventPermission') {
     if (!state.memberships[action.eventId]?.includes(state.actor)) return state;
@@ -112,6 +137,17 @@ export function demoSnapshot(state: DemoState, eventId?: string): Snapshot {
     conversations: state.conversations.filter(c => c.participants.some(p => p.id === state.actor))
       .map(c => ({ ...c, participants: c.participants.map(p => state.people.find(fresh => fresh.id === p.id) ?? p) })),
     activeRecorderConversationId: state.conversations.find(c => c.recorderId === state.actor && ['consent', 'recording'].includes(c.status))?.id,
+  };
+}
+
+/** Mirrors the backend directory: withheld unless the actor enabled Glance for the event. */
+export function demoFaceDirectory(state: DemoState, eventId: string): FaceDirectory {
+  const permitted = state.eventPermissions[eventId] ?? [];
+  const enabled = Boolean(state.memberships[eventId]?.includes(state.actor) && permitted.includes(state.actor));
+  return {
+    model: FACE_MODEL, enabled, scanned: Boolean(state.faceScans[state.actor]),
+    templates: enabled ? (state.memberships[eventId] ?? []).filter(id => permitted.includes(id) && state.faceScans[id])
+      .map(id => ({ profileId: id, descriptors: state.faceScans[id] })) : [],
   };
 }
 

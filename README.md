@@ -4,7 +4,7 @@ Meet in person. Keep the conversation, not just the contact. Glance is an iPhone
 
 ## Read this first
 
-- **Browser preview:** An interactive, fictional-data walkthrough. It does not access a microphone or camera, call an AI model, or send a recap to anyone. Its sample recap is explicitly labelled.
+- **Browser preview:** An interactive, fictional-data walkthrough. It does not access a microphone, call an AI model, or send a recap to anyone. Its sample recap is explicitly labelled. Only **LIVE Camera** opens the camera, for on-device face recognition of people you scan in that tab.
 - **iPhone app:** React Native / Expo source with event enrollment, a required portrait, one permission per attendee at event entry, automatic capture after authorized profile pairing, two-hand finish detection, and a shared recap inside a two-person chat.
 - **Glasses version:** A separate SwiftUI iPhone app using Meta Wearables DAT 1.0.1. It supplies real glasses camera frames to the same hand detector and connects to the same conversation backend. Its audio comes from the iPhone microphone, not the glasses.
 - **Verification boundary:** Browser flows, JavaScript/TypeScript tests, local Convex operations and native-module discovery are testable here. The Swift apps have not been compiled, signed, installed or tested on an iPhone or Adventurer glasses. This is not an App Store release or a hardware-certified demo.
@@ -13,7 +13,7 @@ Meet in person. Keep the conversation, not just the contact. Glance is an iPhone
 
 1. Add your name, a short introduction and a required portrait. Join an event with its invitation code, or create one.
 2. Each real attendee enables Glance once for that event after reading the recording and automatic-sharing disclosure. A portrait or membership alone is not a grant. Native camera/microphone permissions are prepared at event entry, not in the middle of automatic capture.
-3. Select the person you are actually talking to by their event profile. This is the live prototype fallback: face recognition, automatic real-world encounter discovery and always-on speech segmentation are not implemented. The browser preview explicitly simulates an encounter.
+3. Open **LIVE Camera** from the event. Attendees who added an opt-in face scan get a box with their name and talking points drawn from both introductions. When your camera and theirs recognize each other within eight seconds, the conversation starts. Selecting a profile remains the fallback; always-on speech segmentation is not implemented. See [LIVE Camera](#live-camera) for platform limits.
 4. Capture starts without another approval or Start button when both event permissions, both foreground devices and the designated recorder are ready. Temporary WAV recording remains protected by short-lived native consent leases.
 5. Hold up the index, middle and ring fingers on both visible hands, with thumb and little finger folded, or choose **Finish & connect**. Native capture closes before the backend creates the connection. Two hand poses are not proof of two identities.
 6. The finish opens your shared chat directly. There is no separate “Make it mutual” or “Confirm connection” screen. Each participant sees the other person's portrait and the same recap; messaging can begin while the recap is prepared.
@@ -28,6 +28,7 @@ The event disclosure explicitly authorizes **either participant's** finish gestu
 | Mobile UI | Expo SDK 58, React Native, TypeScript, Expo Router |
 | Backend | Convex queries, mutations, actions, private file storage and scheduled cleanup |
 | iPhone hand detection | Apple Vision hand landmarks and a custom two-hand, three-finger stability rule |
+| LIVE Camera (browser) | face-api / TensorFlow.js on-device detection and 128-number descriptors; reactive Convex face directory and mutual sightings |
 | iPhone audio | Local Expo module wrapping AVAudioRecorder, PCM16 mono WAV at 16 kHz, native monotonic watchdog |
 | Glasses camera | Meta Wearables DAT iOS 1.0.1, native SwiftUI capture client |
 | Transcription | Meta `muse-voice-transcribe-1.0`, server-side only |
@@ -62,6 +63,22 @@ EXPO_NO_DOTENV=1 EXPO_PUBLIC_CONVEX_URL= npx expo start --web
 Choose **Enter event**. The fictional attendees already have sample event permissions, so an encounter begins automatically. Choose **Simulate three-finger gesture** to open the shared chat immediately, send a message and use the Alex/Sam preview controls to see the other perspective. Return to the event for **Simulate next encounter**; each encounter creates a separate conversation segment.
 
 Preview state is memory-only and resets on reload. Alex, Sam, their AI-generated portraits and the recap are fictional sample content, not actual users or a transcription result.
+
+## LIVE Camera
+
+From an enabled event, choose **LIVE Camera**. In the preview:
+
+1. Tick the consent box, then **Scan face** for Sam (or **Add a person**, up to five people, and scan someone who agreed). Hold one face in frame for a second; three consistent samples are taken.
+2. Point the camera at that person. They get a green box with their name and talking points; your own scan shows as **You**; anyone without a scan is **Not registered**.
+3. The other side's recognition of you is simulated about 1.5 seconds later, and the usual conversation screen opens with **Simulate three-finger gesture**.
+
+How it works:
+
+- **On-device model:** [face-api](https://github.com/vladmandic/face-api) (MIT) runs TensorFlow.js in the browser: a tiny face detector, 68-point landmarks and a 128-number ResNet descriptor. `scripts/copy-face-models.mjs` copies the ~7 MB of weights into `public/models/face-api` on install and before `web`/`build:web`; they are not committed. The library and models load only when LIVE Camera opens.
+- **Matching:** the closest scan within a 0.5 distance wins, but only if it beats the runner-up by 0.06; a person must be matched several times over 0.6 seconds before counting. A scan that already matches another attendee is refused.
+- **Synced database (live backend):** `faceDirectory` is a reactive Convex query, so every open LIVE Camera updates the moment an attendee joins, enables, pauses, rescans or deletes. It returns only members who have Glance enabled and a face scan, and only to viewers who enabled Glance themselves.
+- **Mutual pairing:** each phone calls `reportSighting` about once a second while it steadily recognizes someone. When both directions arrive within `SIGHTING_WINDOW_MS`, one event-mode conversation is created; Convex serializes the race, so both phones open the same conversation. Fresh sightings are needed for every new encounter.
+- **Platform limits:** recognition runs in browsers (desktop, and phone browsers over HTTPS or localhost). The iPhone app shows a placeholder until the same model is ported natively; templates from a different model would never match. Browser participants still cannot record audio, so a real two-person live conversation needs the native recorder.
 
 For a portable static preview, run `npm run build:web` and serve `dist`. The web-only adapters retain Expo Router's navigation engine but keep routes in the current document's hash, so an unknown hosting subdirectory does not become an application route.
 
@@ -131,7 +148,7 @@ Use the recorder's explicit private setup-secret control, paste only into your o
 
 ## Safety and limits
 
-- **No biometric identification:** A portrait is a profile asset. Neither app identifies people by face or voice; Meta requires prior approval for those sensor-based uses even in unpublished integrations ([Meta acceptable-use policy](https://wearables.developer.meta.com/acceptable-use-policy)).
+- **Opt-in face recognition only:** A portrait is a profile asset and is never matched. Recognition uses only a separate face scan the attendee consents to (`glance-face-v1`), can delete at any time, and that is shared only with members of events where both people enabled Glance. Frames stay on the device; faces without a scan are labelled, never identified. Face templates are biometric data: check consent and retention rules where you run an event (for example Illinois BIPA, GDPR) before using real attendees. Face recognition runs on the phone or browser camera, never the glasses; Meta requires prior approval for sensor-based identification even in unpublished integrations ([Meta acceptable-use policy](https://wearables.developer.meta.com/acceptable-use-policy)).
 - **Event permission before capture:** Both attendees independently enable the event permission. Authorized paired sessions then start automatically; the app does not continuously record everyone in the room. Permission, Stop and finish remain authenticated operations.
 - **Short consent leases:** Server-issued presence challenges have fixed expiry, and the native recorder consumes native-clock anchor tickets created before the network request. Delayed acknowledgements and JavaScript-to-native queue time cannot be treated as fresh authorization by the intended protocol. This implementation still needs device timing, suspension and interruption tests; it is not a hard-real-time certification.
 - **Remote Stop:** Local recorder Stop closes local capture. A remote Stop requires delivery; loss of fresh consent acknowledgements lets the native lease expire. A malicious modified recorder is outside this prototype's enforcement boundary.
