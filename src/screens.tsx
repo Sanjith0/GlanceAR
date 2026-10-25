@@ -227,7 +227,7 @@ export function EventScreen() {
         {app.mode === 'demo' && <Text style={[s.small, { color: colors.blue }]}>{app.demoSummaries
           ? 'Sample attendees, real devices: LIVE Camera and hand gestures use your camera on this device, and each conversation records your microphone until you finish. Finishing sends that audio to Meta, through your local backend, for a speaker-separated summary; nothing is stored.'
           : 'Encounters and recaps here are samples, with no microphone active. LIVE Camera and hand-gesture detection use your real camera, on this device only.'}</Text>}
-        {enabled && <Button icon="camera" onPress={() => router.push(`/live/${id}`)}>LIVE Camera</Button>}
+        {enabled && <Button icon="camera" onPress={() => router.push(`/register/${id}`)}>LIVE Camera</Button>}
         {enabled
           ? <Button tone="secondary" icon="pause" busy={busy} onPress={() => void perform(() => app.setEventPermission(id, false))}>Pause Glance for this event</Button>
           : <Button icon="check" busy={busy} onPress={() => void perform(enable)}>Enable Glance for this event</Button>}

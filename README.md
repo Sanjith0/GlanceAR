@@ -73,10 +73,11 @@ Preview state is memory-only and resets on reload. Alex, Sam, their AI-generated
 
 From an enabled event, choose **LIVE Camera**. In the preview:
 
-1. Tick the consent box, then **Scan my face** and **Scan face** for one consenting attendee. You can also **Add a person**, up to five total. Scan one person at a time; three consistent samples are taken.
-2. Bring yourself and exactly one other registered, enabled attendee into the same camera view. The other person gets a green box, their name and talking points; your own scan shows as **You**. An unregistered face does not count.
-3. Keep both faces recognized for the visible **3, 2, 1** countdown. For the final 2.5 seconds the camera window pulses green with **Initiating conversation · Connection building**. Losing either face, changing the pair, adding an extra face, stopping the camera, or changing a scan resets the hold. Only a fresh frame sampled after the full three seconds can start the conversation; a timer or frozen video cannot.
-4. The conversation screen inherits the existing video stream and uses real two-hand gesture detection to finish. An already-open demo conversation has an explicit **Resume existing conversation** action instead of silently bypassing the hold. Audio and the recap remain samples in preview mode.
+1. **Register faces (step 1).** The camera stays off. Tick the consent box, then use **Add user** (name, intro, face scan) or the **Scan my face** / **Scan face** buttons on the list, up to five people. The camera opens only for the scan, takes three consistent samples, then closes and the person appears under **Registered users**. Cancel, a timeout, a duplicate face or a camera-permission error closes the camera without saving.
+2. **Recognize (step 2).** Tap **Next**. LIVE Camera opens the camera automatically. **Edit registered users** returns to step 1; scans persist across both pages.
+3. Bring yourself and exactly one other registered, enabled attendee into the same camera view. The other person gets a green box, their name and talking points; your own scan shows as **You**. An unregistered face does not count.
+4. Keep both faces recognized for the visible **3, 2, 1** countdown. For the final 2.5 seconds the camera window pulses green with **Initiating conversation · Connection building**. Losing either face, changing the pair, adding an extra face, stopping the camera, or changing a scan resets the hold. Only a fresh frame sampled after the full three seconds can start the conversation; a timer or frozen video cannot.
+5. The conversation screen inherits the existing video stream and uses real two-hand gesture detection to finish. An already-open demo conversation has an explicit **Resume existing conversation** action instead of silently bypassing the hold. Audio and the recap remain samples in preview mode.
 
 This is a same-camera laptop demo, not a simulated acknowledgment from another device. The live backend's authenticated reciprocal-sighting flow is separate and unchanged.
 
