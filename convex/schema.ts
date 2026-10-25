@@ -1,0 +1,70 @@
+import { defineSchema, defineTable } from "convex/server";
+import { v } from "convex/values";
+
+export const recapValidator = v.object({
+  summary: v.string(),
+  topics: v.array(v.string()),
+  nextSteps: v.array(v.string()),
+  source: v.literal("ai"),
+});
+
+export default defineSchema({
+  profiles: defineTable({
+    tokenHash: v.string(),
+    name: v.string(),
+    role: v.string(),
+    photoUrl: v.string(),
+  }).index("by_token", ["tokenHash"]),
+  events: defineTable({
+    title: v.string(),
+    location: v.string(),
+    inviteCode: v.string(),
+    hostId: v.id("profiles"),
+  }).index("by_invite", ["inviteCode"]),
+  memberships: defineTable({
+    eventId: v.id("events"),
+    profileId: v.id("profiles"),
+  })
+    .index("by_event", ["eventId"])
+    .index("by_profile", ["profileId"])
+    .index("by_pair", ["eventId", "profileId"]),
+  conversations: defineTable({
+    eventId: v.id("events"),
+    participantA: v.id("profiles"),
+    participantB: v.id("profiles"),
+    recorderId: v.id("profiles"),
+    status: v.union(
+      v.literal("consent"), v.literal("recording"), v.literal("ended"),
+      v.literal("processing"), v.literal("shared"), v.literal("failed"),
+      v.literal("cancelled"),
+    ),
+    recordingConsent: v.array(v.id("profiles")),
+    exchangeConsent: v.array(v.id("profiles")),
+    lastSeen: v.record(v.string(), v.number()),
+    ticketIssuedAt: v.optional(v.record(v.string(), v.number())),
+    startedAt: v.optional(v.number()),
+    endedAt: v.optional(v.number()),
+    leaseUntil: v.optional(v.number()),
+    audioStorageId: v.optional(v.id("_storage")),
+    audioMimeType: v.optional(v.string()),
+    audioExpiresAt: v.optional(v.number()),
+    uploadGrantedUntil: v.optional(v.number()),
+    generation: v.number(),
+    claimedGeneration: v.optional(v.number()),
+    recap: v.optional(recapValidator),
+    error: v.optional(v.string()),
+  })
+    .index("by_a", ["participantA"])
+    .index("by_b", ["participantB"])
+    .index("by_audio", ["audioStorageId"])
+    .index("by_status", ["status"]),
+  presenceTickets: defineTable({
+    conversationId: v.id("conversations"),
+    profileId: v.id("profiles"),
+    issuedAt: v.number(),
+    expiresAt: v.number(),
+  })
+    .index("by_pair", ["conversationId", "profileId"])
+    .index("by_conversation", ["conversationId"])
+    .index("by_expiry", ["expiresAt"]),
+});

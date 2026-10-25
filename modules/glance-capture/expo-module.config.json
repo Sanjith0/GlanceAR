@@ -1,0 +1,7 @@
+{
+  "platforms": ["apple"],
+  "apple": {
+    "modules": ["GlanceCaptureModule"],
+    "podspecPath": ["ios/GlanceCapture.podspec"]
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "Glance",
+    "slug": "glancear",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "glance",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.glancear.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Take your attendee portrait and detect the optional three-finger end gesture during a consented conversation.",
+        "NSMicrophoneUsageDescription": "Record a conversation only after both participants agree. Either person can stop.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": [
+      ["expo-image-picker", {
+        "photosPermission": "Select the portrait you want other event attendees to see.",
+        "cameraPermission": "Take your attendee profile portrait.",
+        "microphonePermission": false
+      }],
+      "expo-secure-store",
+      "expo-font",
+      "expo-router"
+    ]
+  }
+}

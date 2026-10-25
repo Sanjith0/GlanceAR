@@ -1,0 +1,8 @@
+{
+  "name": "glance-audio",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Foreground iPhone microphone WAV capture with a native consent lease watchdog",
+  "license": "MIT",
+  "main": "index.ts"
+}
