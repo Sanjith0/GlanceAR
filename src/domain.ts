@@ -64,6 +64,8 @@ export interface Conversation {
   messages?: ChatMessage[];
   /** Advisory snapshot only; startRecording rechecks current server authorization. */
   readyToRecord?: boolean;
+  /** Live finish: profileId -> when that person's camera last saw the other's hand. */
+  handSignals?: Record<string, number>;
 }
 
 export interface ChatMessage {
@@ -180,6 +182,8 @@ export interface GlanceDataClient {
   stop(token: string, conversationId: string): Promise<StopResult | void>;
   /** Event-mode only. Call after the native microphone has acknowledged closure. */
   finishConnection(token: string, conversationId: string, method: "gesture" | "button"): Promise<void>;
+  /** Live finish: report that this camera saw the other person's hand. */
+  signalHand(token: string, conversationId: string): Promise<{ both: boolean }>;
   abandonAudio(token: string, conversationId: string): Promise<void>;
   sendMessage(token: string, conversationId: string, text: string): Promise<string>;
   confirmExchange(token: string, conversationId: string): Promise<void>;

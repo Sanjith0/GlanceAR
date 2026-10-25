@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { fonts } from '../theme';
-import { assessHand, TwoHandGate } from '../handGesture';
+import { assessHand, OneHandGate, TwoHandGate } from '../handGesture';
 import { startHandTracking } from './handEngine';
 import { drawHandOverlays } from './handOverlay';
 import { acquireLiveCameraStream } from './liveCameraStream';
@@ -14,6 +14,12 @@ export type GestureCaptureProps = {
   source?: 'phone' | 'glasses';
   onSignal: (event: GestureSignal) => void;
   onStatus?: (message: string) => void;
+  /** 2: both people's hands in this camera (demo). 1: this camera faces the other person (live). */
+  handsRequired?: 1 | 2;
+  /** One-hand mode: whose hand this camera is watching for. */
+  partnerName?: string;
+  /** Changing this re-arms a gate that already fired, without restarting the camera. */
+  rearmKey?: number;
   style?: StyleProp<ViewStyle>;
 };
 
@@ -22,16 +28,16 @@ export async function requestGestureCameraPermission(): Promise<boolean> { retur
 /** Private setup copying remains a local-only native action. */
 export async function copyPrivateSetupJSON(_value: string): Promise<boolean> { return false; }
 
-export default function GestureCapture({ active, armed = true, sessionId, source = 'phone', onSignal, onStatus, style }: GestureCaptureProps) {
+export default function GestureCapture({ active, armed = true, sessionId, source = 'phone', onSignal, onStatus, handsRequired = 2, partnerName = 'their', rearmKey = 0, style }: GestureCaptureProps) {
   const video = useRef<HTMLVideoElement | null>(null), canvas = useRef<HTMLCanvasElement | null>(null);
-  const gate = useRef(new TwoHandGate());
+  const twoHands = useRef(new TwoHandGate()), oneHand = useRef(new OneHandGate());
   const [status, setStatus] = useState('Starting LIVE camera…');
   const [progress, setProgress] = useState(0), [mirrored, setMirrored] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
   const [retry, setRetry] = useState(0), [canRetry, setCanRetry] = useState(false);
   const [visible, setVisible] = useState(() => typeof document === 'undefined' || document.visibilityState === 'visible');
   const cameraKey = JSON.stringify([active, visible, source, sessionId, retry]);
-  const latest = useRef({ cameraKey, armed, onSignal, onStatus });
+  const latest = useRef({ cameraKey, armed, onSignal, onStatus, handsRequired, partnerName });
   const [renderedInputs, setRenderedInputs] = useState({ cameraKey, armed });
   // Reconcile prop-driven visual resets during render, not a cascading effect.
   // Disarming alone must not hide the live video during the green acknowledgment.
@@ -40,8 +46,8 @@ export default function GestureCapture({ active, armed = true, sessionId, source
     setProgress(0);
     if (renderedInputs.cameraKey !== cameraKey) { setVideoReady(false); setCanRetry(false); }
   }
-  useLayoutEffect(() => { latest.current = { cameraKey, armed, onSignal, onStatus }; });
-  useLayoutEffect(() => { gate.current.reset(); }, [armed, sessionId]);
+  useLayoutEffect(() => { latest.current = { cameraKey, armed, onSignal, onStatus, handsRequired, partnerName }; });
+  useLayoutEffect(() => { twoHands.current.reset(); oneHand.current.reset(); }, [armed, sessionId, handsRequired, rearmKey]);
   useEffect(() => {
     const update = () => setVisible(document.visibilityState === 'visible');
     const hide = () => setVisible(false);
@@ -56,8 +62,8 @@ export default function GestureCapture({ active, armed = true, sessionId, source
   }, []);
 
   useEffect(() => {
-    const currentGate = gate.current;
-    currentGate.reset();
+    const gates = [twoHands.current, oneHand.current];
+    gates.forEach(g => g.reset());
     const element = video.current;
     let stopped = false;
     let lease: Awaited<ReturnType<typeof acquireLiveCameraStream>> | null = null;
@@ -89,7 +95,7 @@ export default function GestureCapture({ active, armed = true, sessionId, source
         lease = acquired;
         const ended = () => {
           if (!isCurrent()) return;
-          stopTracking?.(); gate.current.reset(); setProgress(0); setVideoReady(false); setCanRetry(true);
+          stopTracking?.(); twoHands.current.reset(); oneHand.current.reset(); setProgress(0); setVideoReady(false); setCanRetry(true);
           clearOverlay();
           report('Camera stopped. Retry here to continue the conversation.');
         };
@@ -104,7 +110,9 @@ export default function GestureCapture({ active, armed = true, sessionId, source
           video: element,
           isCurrent,
           isLive: () => lease?.stream.getVideoTracks()[0]?.readyState === 'live',
-          onReady: () => report('Both people: show one hand each.'),
+          onReady: () => report(latest.current.handsRequired === 1
+            ? `Watching for ${latest.current.partnerName} hand: thumb, index and middle up.`
+            : 'Both people: show one hand each.'),
           onFrame: (hands, timestamp) => {
             if (!isCurrent()) return;
             const assessments = hands.map(hand => assessHand(hand, element.videoWidth / element.videoHeight));
@@ -114,9 +122,19 @@ export default function GestureCapture({ active, armed = true, sessionId, source
               if (overlay.height !== element.videoHeight) overlay.height = element.videoHeight;
               drawHandOverlays(overlay, hands, assessments);
             }
-            if (!latest.current.armed) { gate.current.reset(); return; }
-            const result = gate.current.observe(assessments, timestamp);
+            const one = latest.current.handsRequired === 1;
+            const current = one ? oneHand.current : twoHands.current;
+            if (!latest.current.armed) { current.reset(); return; }
+            const result = current.observe(assessments, timestamp);
             setProgress(result.progress);
+            if (one) {
+              const who = latest.current.partnerName;
+              report(result.stable ? `${who === 'their' ? 'Their' : who} hand recognized.`
+                : result.hands ? 'Hold it steady…'
+                  : `Watching for ${who} hand: thumb, index and middle up.`);
+              if (result.stable && isCurrent() && latest.current.armed) latest.current.onSignal({ hands: 1, stable: true, source: 'phone' });
+              return;
+            }
             report(result.stable ? 'Both gestures recognized.'
               : hands.length > 2 ? 'Keep only two hands in view, one from each person.'
                 : result.hands === 2 ? 'Hold both gestures steady…'
@@ -125,7 +143,7 @@ export default function GestureCapture({ active, armed = true, sessionId, source
           },
           onError: error => {
             if (!isCurrent()) return;
-            gate.current.reset(); setProgress(0); setCanRetry(true); clearOverlay();
+            twoHands.current.reset(); oneHand.current.reset(); setProgress(0); setCanRetry(true); clearOverlay();
             if (lease?.stream.getVideoTracks()[0]?.readyState !== 'live') {
               setVideoReady(false); report('Camera stopped. Retry here to continue the conversation.');
             } else report(`Hand detection unavailable: ${error instanceof Error ? error.message : 'model could not run'}. Retry here.`);
@@ -143,7 +161,7 @@ export default function GestureCapture({ active, armed = true, sessionId, source
       }
     })();
     return () => {
-      stopped = true; unwatchTracks?.(); controller.abort(); stopTracking?.(); currentGate.reset();
+      stopped = true; unwatchTracks?.(); controller.abort(); stopTracking?.(); gates.forEach(g => g.reset());
       lease?.release();
       if (element) element.srcObject = null;
       clearOverlay();

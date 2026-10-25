@@ -215,3 +215,21 @@ describe('hand engine lifecycle', () => {
     expect(onError).toHaveBeenCalledTimes(1); expect(engine.close).toHaveBeenCalledTimes(1);
   });
 });
+
+import { OneHandGate as LiveOneHandGate } from '../src/handGesture';
+describe('OneHandGate (live: this camera sees the other person)', () => {
+  const hand = (x: number, valid = true) => ({ valid, complete: valid, fingers: [true, true, true, false, false] as [boolean, boolean, boolean, boolean, boolean], center: { x, y: 0.5, z: 0 }, scale: 0.2 });
+  it('fires after a short hold of one valid hand and tolerates one misread frame', () => {
+    const gate = new LiveOneHandGate();
+    expect(gate.observe([hand(0.5)], 0).stable).toBe(false);
+    expect(gate.observe([hand(0.5, false)], 200).stable).toBe(false);
+    expect(gate.observe([hand(0.51)], 400).stable).toBe(false);
+    expect(gate.observe([hand(0.52)], 520).stable).toBe(true);
+    expect(gate.observe([hand(0.52)], 600).stable).toBe(false);
+  });
+  it('restarts after a long gap', () => {
+    const gate = new LiveOneHandGate();
+    gate.observe([hand(0.5)], 0); gate.observe([hand(0.5)], 200);
+    expect(gate.observe([hand(0.5)], 1_200).progress).toBeLessThan(0.5);
+  });
+});

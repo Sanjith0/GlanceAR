@@ -44,6 +44,7 @@ export function createGlanceClient(url: string): GlanceDataClient {
     },
     stop: (token, conversationId) => mutate("stop", { token, conversationId }),
     finishConnection: (token, conversationId, method) => mutate("finishConnection", { token, conversationId, method }),
+    signalHand: (token, conversationId) => mutate("signalHand", { token, conversationId }),
     abandonAudio: (token, id) => session("abandonAudio", token, id),
     sendMessage: (token, conversationId, text) => mutate("sendMessage", { token, conversationId, text }),
     confirmExchange: (token, id) => session("confirmExchange", token, id),

@@ -104,6 +104,7 @@ async function viewConversation(ctx: QueryCtx, c: Doc<"conversations">): Promise
     ...(c.captureSource ? { captureSource: c.captureSource } : {}),
     ...(c.connectedAt !== undefined ? { connectedAt: c.connectedAt } : {}),
     ...(c.finishMethod ? { finishMethod: c.finishMethod } : {}),
+    ...(c.status === "recording" && c.handSignals ? { handSignals: c.handSignals } : {}),
     readyToRecord: c.status === "consent" && validGrants && complete(c.recordingConsent, c) &&
       participants(c).every((id) => (c.lastSeen[id] ?? 0) + RECORDING_FRESHNESS_MS > Date.now()),
     ...(chatAllowed ? { messages: messages.reverse().map((message) => ({
@@ -577,6 +578,26 @@ export const finishConnection = mutation({
     });
     await clearPresenceTickets(ctx, c._id);
     await enqueue(ctx, next);
+  },
+});
+/** Both phones must see the other person's finish hand within this window. */
+export const HAND_PAIR_WINDOW_MS = 4_000;
+/**
+ * Live finish gesture: each phone only sees the other person, so each reports the
+ * hand it saw. Returns both=true once the partner's camera saw this user's hand
+ * recently too; that caller then finishes the connection.
+ */
+export const signalHand = mutation({
+  args: sessionArgs,
+  handler: async (ctx, args) => {
+    const { me, c } = await session(ctx, args.token, args.conversationId);
+    if (c.status !== "recording") return { both: false };
+    const now = Date.now();
+    const partner = participants(c).find((id) => id !== me._id)!;
+    const handSignals = { ...(c.handSignals ?? {}), [me._id]: now };
+    await ctx.db.patch(c._id, { handSignals });
+    const theirs = handSignals[partner];
+    return { both: theirs !== undefined && now - theirs <= HAND_PAIR_WINDOW_MS };
   },
 });
 export const sendMessage = mutation({

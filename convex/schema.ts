@@ -71,6 +71,8 @@ export default defineSchema({
     finishMethod: v.optional(v.union(v.literal("gesture"), v.literal("button"))),
     finishEligibleUntil: v.optional(v.number()),
     audioAbandoned: v.optional(v.boolean()),
+    /** Live finish: when each participant's camera last saw the other's finish hand. */
+    handSignals: v.optional(v.record(v.string(), v.number())),
   })
     .index("by_a", ["participantA"])
     .index("by_b", ["participantB"])

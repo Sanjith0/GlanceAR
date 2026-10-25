@@ -10,7 +10,7 @@ import { cancelLiveCameraHandoff, prepareLiveCameraHandoff } from './capture/liv
 import { matchDescriptor, RecognitionTracker } from './face';
 import { talkingPoints } from './talkingPoints';
 import { SIGHTING_REPORT_INTERVAL_MS } from './domain';
-import { inFinalStretch, RecognitionCountdown, type RecognitionCountdownView } from './recognitionCountdown';
+import { inFinalStretch, LIVE_RECOGNITION_FLASH_MS, LIVE_RECOGNITION_HOLD_MS, RecognitionCountdown, type RecognitionCountdownView } from './recognitionCountdown';
 import { RecognitionScope } from './recognitionScope';
 
 const firstName = (name: string) => name.split(' ')[0];
@@ -83,7 +83,7 @@ export function LiveCameraScreen() {
   const inFlight = useRef(new Set<string>());
   const [overlays, setOverlays] = useState<FaceOverlay[]>([]);
   const [pairing, setPairing] = useState<Record<string, string>>({});
-  const countdown = useRef(new RecognitionCountdown());
+  const countdown = useRef(new RecognitionCountdown(LIVE_RECOGNITION_HOLD_MS));
   const scope = useRef(new RecognitionScope());
   const mounted = useRef(true);
   const attempt = useRef<number | null>(null);
@@ -291,7 +291,7 @@ export function LiveCameraScreen() {
   const cameraActive = focused && enabled && Platform.OS === 'web';
   const counting = countdownView.secondsRemaining !== null;
   const partnerName = firstName(people.get(countdownView.partnerId ?? '')?.name ?? 'your partner');
-  const flashing = !demoPairPending && !active && inFinalStretch(countdownView);
+  const flashing = !demoPairPending && !active && inFinalStretch(countdownView, LIVE_RECOGNITION_HOLD_MS, LIVE_RECOGNITION_FLASH_MS);
   const live = app.mode === 'live';
   const heldName = firstName(people.get(liveHeldId ?? '')?.name ?? 'They');
   // A 4:3 landscape window, as large as the column allows while the countdown card stays on screen.
@@ -308,8 +308,8 @@ export function LiveCameraScreen() {
         <View style={{ gap: 12 }}><Text style={[s.eyebrow, { fontSize: 10, letterSpacing: 1 }]}>STEP 2 OF 2</Text>
           <Text style={s.title}>Who’s here?</Text>
           <Text style={s.muted}>{app.mode === 'demo'
-            ? 'Keep both registered faces in this camera for three seconds. If either leaves, the countdown restarts.'
-            : 'Face the person you’re talking to and point your camera at them while they point theirs at you. Hold for three seconds; once both phones recognize each other, your conversation starts.'}</Text>
+            ? 'Keep both registered faces in this camera for two seconds. If either leaves, the countdown restarts.'
+            : 'Face the person you’re talking to and point your camera at them while they point theirs at you. Hold for two seconds; once both phones recognize each other, your conversation starts.'}</Text>
           {<View testID="recognition-countdown"
             accessibilityLiveRegion="polite"
             style={[s.soft, { backgroundColor: counting || demoPairPending || liveHeldId ? colors.blueLight : colors.canvas,

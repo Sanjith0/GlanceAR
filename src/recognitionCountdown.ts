@@ -3,6 +3,9 @@ export const RECOGNITION_HOLD_MS = 3_000;
 /** The final stretch of the hold that flashes the camera and "Initiating conversation". */
 export const RECOGNITION_FLASH_MS = 2_500;
 export const RECOGNITION_MAX_GAP_MS = 1_200;
+/** LIVE Camera: a two-second hold, flashing for its last 1.5 seconds. */
+export const LIVE_RECOGNITION_HOLD_MS = 2_000;
+export const LIVE_RECOGNITION_FLASH_MS = 1_500;
 
 export type RecognitionCountdownView = {
   partnerId: string | null;
@@ -29,6 +32,9 @@ export class RecognitionCountdown {
   private selfId: string | null = null;
   private partnerId: string | null = null;
   private fired = false;
+
+  /** LIVE Camera uses a shorter hold than the default; tests use the default. */
+  constructor(readonly holdMs: number = RECOGNITION_HOLD_MS) {}
 
   reset(): void {
     this.clearHold();
@@ -60,15 +66,15 @@ export class RecognitionCountdown {
       partnerId: this.partnerId,
       // A timer may reach the deadline, but only a fresh frame may finish.
       secondsRemaining: this.fired ? null
-        : Math.max(1, Math.ceil((RECOGNITION_HOLD_MS - elapsed) / 1_000)) as 3 | 2 | 1,
-      progress: Math.min(1, elapsed / RECOGNITION_HOLD_MS),
+        : Math.max(1, Math.ceil((this.holdMs - elapsed) / 1_000)) as 3 | 2 | 1,
+      progress: Math.min(1, elapsed / this.holdMs),
       completed,
     };
   }
 
   /** Watchdog/UI read: expires stale evidence but can never emit completion. */
   view(now: number): RecognitionCountdownView {
-    if (this.fired) return this.snapshot(this.startedAt! + RECOGNITION_HOLD_MS);
+    if (this.fired) return this.snapshot(this.startedAt! + this.holdMs);
     if (!this.acceptClock(now)) return this.snapshot(now);
     // Sample age is checked at delivery. Comparing this UI clock to the previous
     // sample would charge inference latency again while the next frame is pending.
@@ -81,7 +87,7 @@ export class RecognitionCountdown {
    * A late inference sampled before the deadline cannot complete the hold.
    */
   observe(ids: readonly MatchedId[], selfId: MatchedId, now: number, sampledAt = now): RecognitionCountdownView {
-    if (this.fired) return this.snapshot(this.startedAt! + RECOGNITION_HOLD_MS);
+    if (this.fired) return this.snapshot(this.startedAt! + this.holdMs);
     if (!this.acceptClock(now)) return this.snapshot(now);
     if (!Number.isFinite(sampledAt) || sampledAt < 0 || sampledAt > now
       || now - sampledAt > RECOGNITION_MAX_GAP_MS
@@ -106,7 +112,7 @@ export class RecognitionCountdown {
     this.startedAt ??= now;
     this.selfId = selfId;
     this.partnerId = partnerId;
-    if (now - this.startedAt >= RECOGNITION_HOLD_MS && sampledAt - this.startedAt >= RECOGNITION_HOLD_MS) {
+    if (now - this.startedAt >= this.holdMs && sampledAt - this.startedAt >= this.holdMs) {
       this.fired = true;
       return this.snapshot(now, true);
     }
@@ -115,6 +121,7 @@ export class RecognitionCountdown {
 }
 
 /** True during the last RECOGNITION_FLASH_MS of an active (not yet completed) hold. */
-export function inFinalStretch(view: RecognitionCountdownView): boolean {
-  return view.secondsRemaining !== null && (1 - view.progress) * RECOGNITION_HOLD_MS <= RECOGNITION_FLASH_MS;
+export function inFinalStretch(view: RecognitionCountdownView, holdMs = RECOGNITION_HOLD_MS,
+  flashMs = RECOGNITION_FLASH_MS): boolean {
+  return view.secondsRemaining !== null && (1 - view.progress) * holdMs <= flashMs;
 }

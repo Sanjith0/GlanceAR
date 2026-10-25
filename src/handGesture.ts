@@ -122,3 +122,60 @@ export class TwoHandGate {
     return result;
   }
 }
+
+/** Live mode: each phone points at the other person, so it needs one hand, not two. */
+export const ONE_HAND_HOLD_MS = 500;
+export const ONE_HAND_MIN_FRAMES = 3;
+/** Phone browsers drop frames; a short gap or a single misread pose keeps the hold. */
+export const ONE_HAND_MAX_GAP_MS = 700;
+
+/** A one-shot, continuous single-hand gate for the other person's finish pose. */
+export class OneHandGate {
+  private startedAt: number | null = null;
+  private lastAt: number | null = null;
+  private lastValidAt: number | null = null;
+  private frames = 0;
+  private previous: HandAssessment | null = null;
+  private fired = false;
+
+  reset() {
+    this.startedAt = null; this.lastAt = null; this.lastValidAt = null;
+    this.frames = 0; this.previous = null; this.fired = false;
+  }
+  private clearHold() {
+    this.startedAt = null; this.lastValidAt = null; this.frames = 0; this.previous = null;
+  }
+  private progress(timestamp: number) {
+    if (this.startedAt === null) return 0;
+    return Math.min(1, (timestamp - this.startedAt) / ONE_HAND_HOLD_MS, this.frames / ONE_HAND_MIN_FRAMES);
+  }
+  observe(hands: HandAssessment[], timestamp: number): HandGateResult {
+    const valid = hands.filter(hand => hand.valid);
+    const result = { hands: valid.length ? 1 : 0, stable: false, progress: 0 };
+    if (this.fired) return result;
+    if (!Number.isFinite(timestamp) || (this.lastAt !== null && timestamp <= this.lastAt)) {
+      this.clearHold(); return result;
+    }
+    if (this.lastAt !== null && timestamp - this.lastAt > ONE_HAND_MAX_GAP_MS) this.clearHold();
+    this.lastAt = timestamp;
+    if (!valid.length) {
+      if (this.lastValidAt === null || timestamp - this.lastValidAt > ONE_HAND_MAX_GAP_MS) this.clearHold();
+      result.progress = this.progress(timestamp);
+      return result;
+    }
+    const previous = this.previous;
+    // Follow the hand being held; otherwise take the largest (nearest) one.
+    const hand = previous
+      ? valid.reduce((a, b) => distance(a.center, previous.center) <= distance(b.center, previous.center) ? a : b)
+      : valid.reduce((a, b) => a.scale >= b.scale ? a : b);
+    if (previous && !(distance(hand.center, previous.center) < Math.max(hand.scale, previous.scale) * 0.9
+      && Math.max(hand.scale, previous.scale) / Math.min(hand.scale, previous.scale) < 1.8)) this.clearHold();
+    this.startedAt ??= timestamp;
+    this.previous = hand;
+    this.lastValidAt = timestamp;
+    this.frames++;
+    result.progress = this.progress(timestamp);
+    if (result.progress >= 1) { this.fired = true; result.stable = true; }
+    return result;
+  }
+}
