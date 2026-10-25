@@ -47,6 +47,7 @@ modules/glance-audio/       Guarded native recording and tested lifecycle contro
 modules/glance-capture/     Native phone camera and hand geometry
 convex/                     Backend, Meta pipeline, permissions and cleanup
 ios-glasses/                Separate native DAT app, XcodeGen project and Swift tests
+ios-glasses-live/           iPhone shell for the live web app with an iPhone / Ray-Ban Meta conversation-camera picker
 docs/                       Native setup, limits and acceptance checks
 tests/                      Application and backend tests
 FLOWS.md                    Browser and device acceptance inventory
@@ -167,6 +168,15 @@ npx eas-cli@latest build --platform ios --profile development
 ```
 
 Do not enable background audio. Recording should stop on inactivity, route changes, interruptions or lease loss, and must never silently resume.
+
+## Ray-Ban Meta as the conversation camera
+
+`ios-glasses-live` opens https://glancear.vercel.app in a web view and adds a camera picker (iPhone camera or Ray-Ban Meta) on the conversation screen. The glasses are used only for the live view and finish gesture. Face registration and LIVE Camera recognition always use the iPhone camera. Setup: [docs/META-GLASSES-LIVE.md](docs/META-GLASSES-LIVE.md).
+
+```sh
+brew install xcodegen
+cd ios-glasses-live && xcodegen generate && open GlanceGlassesLive.xcodeproj
+```
 
 ## Build the Meta glasses version
 

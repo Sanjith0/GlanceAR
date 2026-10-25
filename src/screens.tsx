@@ -13,6 +13,7 @@ import type { Conversation, Profile } from './domain';
 import { useConversationCapture } from './useConversationCapture';
 import GestureCapture, { copyPrivateSetupJSON } from './capture/GestureCapture';
 import { cancelLiveCameraHandoff } from './capture/liveCameraStream';
+import { glassesShellAvailable, setCameraDevice, useCameraDevice, type CameraDevice } from './capture/glassesBridge';
 import { ConversationChat } from './ConversationChat';
 import {
   beginConnectionFinish, completeConnectionAcknowledgment, CONNECTION_ACKNOWLEDGMENT_MS,
@@ -341,6 +342,24 @@ export function EnrollmentScreen() {
   </Page>;
 }
 
+/** Shown only inside the Glance Glasses Live iPhone shell. Recognition stays on the iPhone camera. */
+function CameraPicker({ value, onChange }: { value: CameraDevice; onChange: (device: CameraDevice) => void }) {
+  const options: { device: CameraDevice; label: string }[] = [{ device: 'phone', label: 'iPhone camera' }, { device: 'glasses', label: 'Ray-Ban Meta' }];
+  return <View style={{ gap: 6 }}>
+    <View accessibilityRole="radiogroup" style={{ flexDirection: 'row', padding: 3, borderRadius: 12, backgroundColor: colors.line }}>
+      {options.map(option => {
+        const selected = option.device === value;
+        return <Pressable key={option.device} testID={`camera-${option.device}`} accessibilityRole="radio" accessibilityState={{ selected }}
+          onPress={() => onChange(option.device)}
+          style={{ flex: 1, paddingVertical: 9, borderRadius: 10, alignItems: 'center', backgroundColor: selected ? colors.paper : 'transparent' }}>
+          <Text style={{ fontFamily: selected ? fonts.bold : fonts.medium, fontSize: 14, color: selected ? colors.ink : colors.muted }}>{option.label}</Text>
+        </Pressable>;
+      })}
+    </View>
+    {value === 'glasses' && <Text style={s.small}>The glasses camera is used only for the finish gesture. Face recognition always uses the iPhone camera.</Text>}
+  </View>;
+}
+
 function GlassesHandoff({ conversation }: { conversation: Conversation }) {
   const app = useGlance();
   const [open, setOpen] = useState(false);
@@ -391,6 +410,7 @@ export function ConversationScreen() {
   useLayoutEffect(() => { start.current = capture.start; }, [capture.start]);
   const attempted = useRef(new Set<string>());
   const [clock, setClock] = useState(() => Date.now()), [cameraStatus, setCameraStatus] = useState('');
+  const cameraDevice = useCameraDevice();
   const [foreground, setForeground] = useState(AppState.currentState === 'active');
   const [feedbackState, setFeedbackState] = useState<ConnectionFeedback>({ id, phase: 'idle' });
   const finishInFlight = useRef<string | null>(null);
@@ -594,7 +614,8 @@ export function ConversationScreen() {
     {showCamera && <View style={{ gap: 12 }}>
       <View style={s.between}><Text style={s.heading}>Three fingers.{'\n'}You’re connected.</Text>
         <Text style={{ color: colors.blue, fontSize: 42, fontFamily: fonts.bold }}>3</Text></View>
-      <GestureCapture active={focused && foreground} armed={armed} sessionId={id} source="phone"
+      {glassesShellAvailable() && <CameraPicker value={cameraDevice} onChange={setCameraDevice} />}
+      <GestureCapture active={focused && foreground} armed={armed} sessionId={id} source="phone" device={cameraDevice}
         handsRequired={liveHands ? 1 : 2} partnerName={`${firstName(other.name)}’s`} rearmKey={handRearm}
         style={{ height: 256, borderRadius: 18, overflow: 'hidden' }}
         onStatus={setCameraStatus} onSignal={signal => {

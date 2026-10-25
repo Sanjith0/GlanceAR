@@ -5,6 +5,7 @@ import { assessHand, OneHandGate, TwoHandGate } from '../handGesture';
 import { startHandTracking } from './handEngine';
 import { drawHandOverlays } from './handOverlay';
 import { acquireLiveCameraStream } from './liveCameraStream';
+import { acquireGlassesStream, type CameraDevice } from './glassesBridge';
 
 export type GestureSignal = { hands: number; stable: boolean; source: 'phone' | 'glasses' };
 export type GestureCaptureProps = {
@@ -16,6 +17,8 @@ export type GestureCaptureProps = {
   onStatus?: (message: string) => void;
   /** 2: both people's hands in this camera (demo). 1: this camera faces the other person (live). */
   handsRequired?: 1 | 2;
+  /** 'glasses' only inside the Glance Glasses Live iPhone shell. */
+  device?: CameraDevice;
   /** One-hand mode: whose hand this camera is watching for. */
   partnerName?: string;
   /** Changing this re-arms a gate that already fired, without restarting the camera. */
@@ -28,7 +31,7 @@ export async function requestGestureCameraPermission(): Promise<boolean> { retur
 /** Private setup copying remains a local-only native action. */
 export async function copyPrivateSetupJSON(_value: string): Promise<boolean> { return false; }
 
-export default function GestureCapture({ active, armed = true, sessionId, source = 'phone', onSignal, onStatus, handsRequired = 2, partnerName = 'their', rearmKey = 0, style }: GestureCaptureProps) {
+export default function GestureCapture({ active, armed = true, sessionId, source = 'phone', onSignal, onStatus, handsRequired = 2, partnerName = 'their', rearmKey = 0, device = 'phone', style }: GestureCaptureProps) {
   const video = useRef<HTMLVideoElement | null>(null), canvas = useRef<HTMLCanvasElement | null>(null);
   const twoHands = useRef(new TwoHandGate()), oneHand = useRef(new OneHandGate());
   const [status, setStatus] = useState('Starting LIVE camera…');
@@ -36,7 +39,7 @@ export default function GestureCapture({ active, armed = true, sessionId, source
   const [videoReady, setVideoReady] = useState(false);
   const [retry, setRetry] = useState(0), [canRetry, setCanRetry] = useState(false);
   const [visible, setVisible] = useState(() => typeof document === 'undefined' || document.visibilityState === 'visible');
-  const cameraKey = JSON.stringify([active, visible, source, sessionId, retry]);
+  const cameraKey = JSON.stringify([active, visible, source, sessionId, retry, device]);
   const latest = useRef({ cameraKey, armed, onSignal, onStatus, handsRequired, partnerName });
   const [renderedInputs, setRenderedInputs] = useState({ cameraKey, armed });
   // Reconcile prop-driven visual resets during render, not a cascading effect.
@@ -89,8 +92,10 @@ export default function GestureCapture({ active, armed = true, sessionId, source
     void (async () => {
       try {
         if (!element) return;
-        report('Starting LIVE camera…');
-        const acquired = await acquireLiveCameraStream(undefined, `conversation:${sessionId ?? 'standalone'}`, controller.signal);
+        report(device === 'glasses' ? 'Starting Meta glasses camera…' : 'Starting LIVE camera…');
+        const acquired = device === 'glasses'
+          ? await acquireGlassesStream(controller.signal)
+          : await acquireLiveCameraStream(undefined, `conversation:${sessionId ?? 'standalone'}`, controller.signal);
         if (!isCurrent()) { acquired.release(); return; }
         lease = acquired;
         const ended = () => {
@@ -166,7 +171,7 @@ export default function GestureCapture({ active, armed = true, sessionId, source
       if (element) element.srcObject = null;
       clearOverlay();
     };
-  }, [active, visible, source, sessionId, retry, cameraKey]);
+  }, [active, visible, source, sessionId, retry, device, cameraKey]);
 
   const mediaStyle: React.CSSProperties = { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain',
     transform: mirrored ? 'scaleX(-1)' : undefined, opacity: active && visible ? 1 : 0 };
