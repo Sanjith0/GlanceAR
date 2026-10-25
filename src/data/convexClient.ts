@@ -30,7 +30,9 @@ export function createGlanceClient(url: string): GlanceDataClient {
     },
     createEvent: (token, title, location) => mutate("createEvent", { token, title, location }),
     joinEvent: (token, inviteCode) => mutate("joinEvent", { token, inviteCode }),
-    createConversation: (token, eventId, partnerId) => mutate("createConversation", { token, eventId, partnerId }),
+    setEventPermission: (token, eventId, enabled) => mutate("setEventPermission", { token, eventId, enabled }),
+    createConversation: (token, eventId, partnerId, mode, source) =>
+      mutate("createConversation", { token, eventId, partnerId, ...(mode ? { mode } : {}), ...(source ? { source } : {}) }),
     consentRecording: (token, id) => session("consentRecording", token, id),
     startRecording: (token, conversationId) => mutate("startRecording", { token, conversationId }),
     heartbeat: async (token, conversationId, stillConsenting = () => true) => {
@@ -40,7 +42,10 @@ export function createGlanceClient(url: string): GlanceDataClient {
       const lease = await mutate<RecordingLease | null>("heartbeat", { token, conversationId, ticketId: ticket.ticketId });
       return stillConsenting() ? lease : null;
     },
-    stop: (token, id) => session("stop", token, id),
+    stop: (token, conversationId) => mutate("stop", { token, conversationId }),
+    finishConnection: (token, conversationId, method) => mutate("finishConnection", { token, conversationId, method }),
+    abandonAudio: (token, id) => session("abandonAudio", token, id),
+    sendMessage: (token, conversationId, text) => mutate("sendMessage", { token, conversationId, text }),
     confirmExchange: (token, id) => session("confirmExchange", token, id),
     createUploadUrl: (token, conversationId) => mutate("createUploadUrl", { token, conversationId }),
     attachAudio: (token, conversationId, storageId, mimeType) => mutate("attachAudio", { token, conversationId, storageId, mimeType }),

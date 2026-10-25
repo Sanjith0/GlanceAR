@@ -5,21 +5,21 @@ Meet in person. Keep the conversation, not just the contact. Glance is an iPhone
 ## Read this first
 
 - **Browser preview:** An interactive, fictional-data walkthrough. It does not access a microphone or camera, call an AI model, or send a recap to anyone. Its sample recap is explicitly labelled.
-- **iPhone app:** React Native / Expo source with event enrollment, required portrait, explicit attendee pairing, two-account recording approval, a native guarded microphone recorder, two-hand gesture detection, and a shared recap inbox.
+- **iPhone app:** React Native / Expo source with event enrollment, a required portrait, one permission per attendee at event entry, automatic capture after authorized profile pairing, two-hand finish detection, and a shared recap inside a two-person chat.
 - **Glasses version:** A separate SwiftUI iPhone app using Meta Wearables DAT 1.0.1. It supplies real glasses camera frames to the same hand detector and connects to the same conversation backend. Its audio comes from the iPhone microphone, not the glasses.
 - **Verification boundary:** Browser flows, JavaScript/TypeScript tests, local Convex operations and native-module discovery are testable here. The Swift apps have not been compiled, signed, installed or tested on an iPhone or Adventurer glasses. This is not an App Store release or a hardware-certified demo.
 
 ## The experience
 
 1. Add your name, a short introduction and a required portrait. Join an event with its invitation code, or create one.
-2. Select the person you are actually talking to by their event profile. There is no face matching or automatic ambient recording.
-3. Both people explicitly approve recording on their own authenticated devices. Only the designated recording device may start.
-4. Talk. The recording device captures a temporary WAV while both foreground participants continue to acknowledge short-lived presence challenges.
-5. Hold up the index, middle and ring fingers on both visible hands, with thumb and little finger folded, or press Stop. Two stable hand signals end capture; the detector does not establish whose hands they are.
-6. Both authenticated participants independently confirm the connection. Only then may the backend transcribe and summarize the recording.
-7. Both receive the same shared recap. Each sees the other participant's profile portrait.
+2. Each real attendee enables Glance once for that event after reading the recording and automatic-sharing disclosure. A portrait or membership alone is not a grant. Native camera/microphone permissions are prepared at event entry, not in the middle of automatic capture.
+3. Select the person you are actually talking to by their event profile. This is the live prototype fallback: face recognition, automatic real-world encounter discovery and always-on speech segmentation are not implemented. The browser preview explicitly simulates an encounter.
+4. Capture starts without another approval or Start button when both event permissions, both foreground devices and the designated recorder are ready. Temporary WAV recording remains protected by short-lived native consent leases.
+5. Hold up the index, middle and ring fingers on both visible hands, with thumb and little finger folded, or choose **Finish & connect**. Native capture closes before the backend creates the connection. Two hand poses are not proof of two identities.
+6. The finish opens your shared chat directly. There is no separate “Make it mutual” or “Confirm connection” screen. Each participant sees the other person's portrait and the same recap; messaging can begin while the recap is prepared.
+7. To withdraw without connecting, use **Stop without sharing**. To leave while local audio is pending, a navigation guard offers explicit discard; the already-created chat is preserved.
 
-The second confirmation is intentional. A visible gesture can stop recording, but two hands cannot prove two identities or retroactively authorize audio that has already been captured.
+The event disclosure explicitly authorizes **either participant's** finish gesture or button to connect and share. The gesture is a completion signal under both standing permissions, not a new identity credential or retroactive recording consent. Event revocation fences unfinished work; re-enabling cannot resurrect an old recording.
 
 ## Stack and layout
 
@@ -37,6 +37,7 @@ The second confirmation is intentional. A visible gesture can stop recording, bu
 ```text
 src/app/                    Expo Router screens
 src/screens.tsx             Phone interface and explicit sample walkthrough
+src/ConversationChat.tsx    Shared recap, two-person messages and deletion controls
 src/state.tsx               Device session, live backend and separate demo state
 src/data/                   Typed Convex client
 src/capture/                Native/web capability adapters
@@ -58,7 +59,7 @@ npm ci
 EXPO_NO_DOTENV=1 EXPO_PUBLIC_CONVEX_URL= npx expo start --web
 ```
 
-Enter the sample event and start a conversation. Use the clearly labelled Alex/Sam controls to approve each side separately, return to Alex to start, simulate the gesture, and confirm each side of the exchange. Switch identities on the recap to verify the symmetric text and opposite portrait.
+Choose **Enter event**. The fictional attendees already have sample event permissions, so an encounter begins automatically. Choose **Simulate three-finger gesture** to open the shared chat immediately, send a message and use the Alex/Sam preview controls to see the other perspective. Return to the event for **Simulate next encounter**; each encounter creates a separate conversation segment.
 
 Preview state is memory-only and resets on reload. Alex, Sam, their AI-generated portraits and the recap are fictional sample content, not actual users or a transcription result.
 
@@ -124,19 +125,23 @@ Meta's documented route is a paired iPhone/Android integration using DAT, not a 
 
 The deliberate audio fallback is **glasses camera plus iPhone microphone**. Meta documents that HFP beamforming significantly suppresses other speakers and that non-beamformed in-stream audio remains restricted to development/beta channels, so this prototype does not pretend that glasses microphones have been proven to capture both people ([Meta microphone and speaker documentation](https://wearables.developer.meta.com/docs/develop/dat/microphones-and-speakers/)).
 
-The Expo app and DAT app are separate binaries for now. Use the recorder's explicit private setup-secret control before starting capture, paste only into your own native DAT app, and keep the other participant's main app foreground. Never run both recorders simultaneously or share the recorder credential with the other participant.
+The Expo app and DAT app are separate binaries for now. Choose **Glasses harness** at event setup, before pairing. The backend binds that conversation to its capture source; restarting the companion or changing another event's default cannot switch the owner. Source changes are locked during pairing and any active recorder session.
+
+Use the recorder's explicit private setup-secret control, paste only into your own native DAT app, and keep the other participant's main app foreground. The Expo recorder and presence loop are disabled for a glasses-owned recorder account. The harness treats phone-owned event conversations as read-only; never share the recorder credential with the other participant. Finish and wait for the harness upload before returning to the main phone chat.
 
 ## Safety and limits
 
 - **No biometric identification:** A portrait is a profile asset. Neither app identifies people by face or voice; Meta requires prior approval for those sensor-based uses even in unpublished integrations ([Meta acceptable-use policy](https://wearables.developer.meta.com/acceptable-use-policy)).
-- **Consent before capture:** No conversation detection starts recording automatically. Consent, Stop and exchange are authenticated operations; a gesture is not an authorization credential.
+- **Event permission before capture:** Both attendees independently enable the event permission. Authorized paired sessions then start automatically; the app does not continuously record everyone in the room. Permission, Stop and finish remain authenticated operations.
 - **Short consent leases:** Server-issued presence challenges have fixed expiry, and the native recorder consumes native-clock anchor tickets created before the network request. Delayed acknowledgements and JavaScript-to-native queue time cannot be treated as fresh authorization by the intended protocol. This implementation still needs device timing, suspension and interruption tests; it is not a hard-real-time certification.
 - **Remote Stop:** Local recorder Stop closes local capture. A remote Stop requires delivery; loss of fresh consent acknowledgements lets the native lease expire. A malicious modified recorder is outside this prototype's enforcement boundary.
+- **Stop versus finish:** Ordinary Stop permanently prevents a later finish if it wins first. If a peer already finished, the authoritative Stop receipt preserves that connection even when a phone's displayed snapshot is stale. Missing local audio marks the recap unavailable without destroying the chat.
+- **Temple controls:** No custom temple-tap-to-connect integration is implemented. Hardware mappings and access vary; the reliable prototype fallback is the phone's Finish & connect button.
 - **Local retention:** Protected cache files are deleted after successful attachment or explicit discard, with 15-minute opportunistic cleanup on initialization, foreground and preparation. Exact-time deletion cannot run while iOS has terminated or suspended the app or protected files are inaccessible.
 - **Server retention:** Attached raw audio is purged after success, ordinary processing failure, cancellation or deletion. In-flight uploads can become unattached objects after cancellation; orphan cleanup runs after 15 minutes with a five-minute sweep interval. This does not retract already transmitted provider requests or erase provider-controlled retention.
 - **Private conversations:** Only the two participants can access the conversation. Event members can already see each other's portraits; the host does not gain access to private recaps.
 - **Prototype accounts:** Device credentials are not production authentication. Recovery, rotation, verified identities, complete account deletion, general abuse controls and scalable profile storage still need implementation.
-- **Scope caps:** At most 24 members per event, 100 joined events per profile and ten recent conversations per snapshot in this prototype.
+- **Scope caps:** At most 24 members per event, 100 joined events per profile, ten recent conversations per snapshot and the latest 50 messages per chat in this prototype. Messages are limited to 2,000 characters.
 - **Real-world audio:** Use a controlled, consented two-person demo away from bystanders. Verify both voices at actual venue noise levels, and provide an obvious recording indicator and always-accessible Stop control.
 - **Dependency advisory:** The current Expo toolchain has unresolved transitive advisories. Do not apply the audit tool's destructive downgrade suggestion; see [the dependency audit](convex/DEPENDENCY_AUDIT.md) before distributing a public build.
 

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   deleteAudioCapture,
   createAudioLeaseTicket,
+  requestAudioPermission,
   isAudioCaptureAvailable,
   prepareAudioCapture,
   renewAudioLease,
@@ -17,6 +18,7 @@ const { native, platform, remove } = vi.hoisted(() => {
     platform: { OS: 'ios' },
     native: {
       prepare: vi.fn(),
+      requestPermission: vi.fn(),
       createLeaseTicket: vi.fn(),
       start: vi.fn(),
       renew: vi.fn(),
@@ -39,6 +41,15 @@ describe('native audio boundary', () => {
     await prepareAudioCapture('capture-a');
     expect(native.prepare).toHaveBeenCalledWith('capture-a');
     expect(native.start).not.toHaveBeenCalled();
+  });
+
+  it('event-entry permission request never prepares or starts audio', async () => {
+    native.requestPermission.mockResolvedValueOnce(true);
+    await expect(requestAudioPermission()).resolves.toBe(true);
+    expect(native.prepare).not.toHaveBeenCalled();
+    expect(native.start).not.toHaveBeenCalled();
+    native.requestPermission.mockResolvedValueOnce(false);
+    await expect(requestAudioPermission()).resolves.toBe(false);
   });
 
   it('forwards ticket, capture ID and raw server duration unchanged', async () => {
@@ -75,6 +86,7 @@ describe('native audio boundary', () => {
   it('fails closed outside iOS, with cleanup remaining safe', async () => {
     platform.OS = 'android';
     expect(isAudioCaptureAvailable()).toBe(false);
+    await expect(requestAudioPermission()).resolves.toBe(false);
     await expect(prepareAudioCapture('capture-a')).rejects.toThrow('iPhone development build');
     await expect(startAudioCapture(1_000, 'ticket', 'capture-a')).rejects.toThrow('iPhone development build');
     await expect(stopAudioCapture('capture-a')).resolves.toEqual({ uri: null, mimeType: 'audio/wav' });

@@ -5,14 +5,17 @@ GlanceAudio is a local iOS Expo module and reusable Swift recorder for consent-l
 ## Implementation contract
 
 - **Recorder:** `LeaseAudioRecorder.swift` and `LeaseDeadline.swift` have no Expo dependency; include both in the standalone harness. Their callbacks run on a private serial queue.
-- **Expo bridge:** `GlanceAudioModule.swift` exports `prepare(captureID)`, `createLeaseTicket()`, `start(durationMs,ticket,captureID)`, `renew(durationMs,ticket,captureID)`, `stop(captureID)`, `delete(uri)`, and `onAudioStopped` with capture ID; the app-facing wrapper is `src/capture/audio.native.ts`.
+- **Expo bridge:** `GlanceAudioModule.swift` exports permission-only `requestPermission()`, `prepare(captureID)`, `createLeaseTicket()`, `start(durationMs,ticket,captureID)`, `renew(durationMs,ticket,captureID)`, `stop(captureID)`, `delete(uri)`, and `onAudioStopped` with capture ID; the app-facing wrapper is `src/capture/audio.native.ts`.
 - **Lease:** Mint a single-use native monotonic ticket before each backend start or presence-handshake request. Pass the raw finite server duration `clamp(leaseUntil-serverNow,0,5000)` without a second JavaScript RTT subtraction; all elapsed time from the native anchor, including network and bridge stalls, consumes the lease.
 - **Ticket scope:** Tickets expire after five seconds and bind to a prepared capture ID; stop revokes that ID and clears tickets, while old scoped stop/renew work cannot affect another capture. The legacy direct-Swift duration overloads remain for compatibility but neither the Expo bridge nor the standalone harness uses them.
 - **Hard cap:** Ten minutes from the initial ticket anchor, unaffected by renewals, enforced by a native timer and `record(forDuration:)`.
 - **Microphone:** Built-in iPhone input only, no Bluetooth HFP. Loss of that route stops capture.
 - **Storage:** Protected, backup-excluded `Caches/GlanceAudio/capture-<UUID>.wav`; stop is idempotent until a new prepare or deletion. Inactive owned files at least 15 minutes old are swept when the recorder is initialized, the app becomes active, and preparation runs; the native cutoff is measured conservatively from file creation.
-- **Consent:** The caller must obtain both participants' explicit consent before `prepare`, and a live backend lease before `start`. OS permission is not a substitute for participant consent.
+- **Consent:** Both participants need current informed recording authorization before `prepare`, either their event-level grants or legacy per-conversation confirmations, and a live backend lease before `start`. Request OS permission separately at event entry before any capture attempt; OS permission is not a substitute for participant consent.
 - **Controller:** `src/CaptureController.ts` is a pure, tested state machine with a global microphone owner, focus-bound presence, serialized challenge/ACK handshakes spaced at least 550 ms after the prior completion using monotonic time, synchronous withdrawal, scoped finalization, abortable upload, and pending-file identity checks; the React hook is an adapter, not the safety timer.
+- **Event finish:** Only explicit event gesture/Finish-button reasons connect after native audio close. Ordinary Stop never creates a connection; its atomic server result reconciles a peer finish before upload/discard, without trusting a potentially stale UI snapshot.
+- **Navigation:** Keep chat on the same focused route until `navigationSafe`; automatic departure preserves committed or uncertain event connections. `discardLocal`/`abandonAudio` removes pending raw audio without deleting the connection, unlike explicit cancellation.
+- **Source ownership:** Select the standalone harness before pairing and disable the Expo hook for that recorder with `{ enabled: false }`. This is not a live-recording handoff protocol.
 
 ## Recording format and official API checks
 

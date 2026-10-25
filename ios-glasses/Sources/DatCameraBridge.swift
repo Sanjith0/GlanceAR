@@ -60,6 +60,20 @@ final class DatCameraBridge: ObservableObject {
     status = "Camera permission granted. Live camera support is verified only when frames arrive."
   }
 
+  /// Read-only readiness probe. Event auto-start never opens a permission prompt.
+  func isPreparedForCapture() async -> Bool {
+    guard configured, Wearables.shared.registrationState == .registered,
+      !Wearables.shared.devices.isEmpty else { return false }
+    return (try? await Wearables.shared.checkPermissionStatus(.camera)) == .granted
+  }
+
+  var hasLiveFrames: Bool {
+    camera != nil && session?.state == .started && frames > 0
+      && ProcessInfo.processInfo.systemUptime - lastFrameAt < 3
+  }
+
+  func resetGestureGate() { analyzer.reset() }
+
   func start(isAllowed: @escaping () -> Bool,
              onSignal: @escaping () -> Void,
              onFailure: @escaping (String) -> Void) async throws {
@@ -160,6 +174,18 @@ final class DatCameraBridge: ObservableObject {
           }
         }
       }
+      // A configured camera is not proof of a functioning stream. Do not let
+      // the caller open the microphone until an actual DAT frame is analyzed.
+      let frameDeadline = ProcessInfo.processInfo.systemUptime + 8
+      while frames == 0 {
+        guard isAllowed(), !Task.isCancelled, epoch == current,
+          ProcessInfo.processInfo.systemUptime < frameDeadline else {
+          throw HarnessError("No actual glasses frames arrived before the capture deadline.")
+        }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        guard isAllowed(), !Task.isCancelled, epoch == current else { throw CancellationError() }
+      }
+      guard hasLiveFrames else { throw HarnessError("Glasses frames stopped before microphone startup.") }
     } catch {
       if epoch == current { stop() }
       throw error

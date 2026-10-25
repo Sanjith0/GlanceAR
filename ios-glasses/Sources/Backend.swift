@@ -7,6 +7,12 @@ struct HarnessError: LocalizedError {
   init(_ message: String) { self.message = message }
 }
 
+struct BackendResponseError: LocalizedError {
+  let code: String?
+  let message: String
+  var errorDescription: String? { message }
+}
+
 struct PairingConfiguration: Codable {
   let deploymentURL: String
   let token: String
@@ -37,20 +43,32 @@ struct PresenceTicket: Decodable {
   let expiresAt: Double
 }
 
+struct StopReceipt: Decodable {
+  let status: String
+  let connectedAt: Double?
+}
+
 struct ProfileRecord: Decodable {
   let id: String
   let name: String
+  let glanceEnabled: Bool?
 }
 
 struct ConversationRecord: Decodable {
   let id: String
+  let eventId: String?
   let recorderId: String
   let participants: [ProfileRecord]
-  let status: String
+  var status: String
   let recordingConsent: [String]
   let exchangeConsent: [String]
   let recap: RecapRecord?
   let error: String?
+  let consentMode: String?
+  let captureSource: String?
+  var connectedAt: Double?
+  let finishMethod: String?
+  let readyToRecord: Bool?
   var participantIds: [String] { participants.map(\.id) }
   var summary: String? { recap?.summary }
   var bothRecordingConsent: Bool {
@@ -68,12 +86,40 @@ struct RecapRecord: Decodable {
 struct BackendSnapshot: Decodable {
   let me: ProfileRecord?
   let conversations: [ConversationRecord]
+  let event: EventRecord?
+  let eventPermission: EventPermissionRecord?
+  let members: [ProfileRecord]?
+}
+
+struct EventRecord: Decodable {
+  let id: String
+}
+
+struct EventPermissionRecord: Decodable {
+  let enabled: Bool
+  let policyVersion: String
+  let grantedAt: Double?
 }
 
 private struct APIResponse<T: Decodable>: Decodable {
   let status: String
   let value: T?
   let errorMessage: String?
+  let errorData: BackendErrorData?
+}
+
+private struct BackendErrorData: Decodable {
+  let code: String?
+  init(from decoder: Decoder) throws {
+    enum Keys: String, CodingKey { case code }
+    if let container = try? decoder.container(keyedBy: Keys.self) {
+      code = try? container.decode(String.self, forKey: .code)
+    } else if let encoded = try? decoder.singleValueContainer().decode(String.self),
+      let data = encoded.data(using: .utf8),
+      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+      code = object["code"] as? String
+    } else { code = nil }
+  }
 }
 
 /// Convex's documented HTTP API. Device token is only in POST JSON, never a URL.
@@ -108,7 +154,8 @@ final class BackendClient {
     else { throw HarnessError("Backend request failed. Check connection and deployment.") }
     let envelope = try JSONDecoder().decode(APIResponse<T>.self, from: data)
     guard envelope.status == "success" else {
-      throw HarnessError(envelope.errorMessage ?? "Backend denied the request.")
+      throw BackendResponseError(code: envelope.errorData?.code,
+        message: envelope.errorMessage ?? "Backend denied the request.")
     }
     return envelope.value
   }
@@ -120,6 +167,24 @@ final class BackendClient {
 
   func mutation(_ name: String) async throws {
     let _: String? = try await sessionCall(name, as: String.self)
+  }
+
+  func finishConnection(method: String) async throws {
+    guard ["gesture", "button"].contains(method) else {
+      throw HarnessError("Unsupported finish method.")
+    }
+    let _: String? = try await sessionCall("finishConnection", extra: ["method": method], as: String.self)
+  }
+
+  func stop() async throws -> StopReceipt {
+    guard let receipt = try await sessionCall("stop", as: StopReceipt.self) else {
+      throw HarnessError("Stop returned no authoritative receipt. Audio is retained until state can be reconciled.")
+    }
+    return receipt
+  }
+
+  func abandonAudio() async throws {
+    let _: String? = try await sessionCall("abandonAudio", as: String.self)
   }
 
   func snapshot() async throws -> BackendSnapshot {

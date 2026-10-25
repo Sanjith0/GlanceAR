@@ -4,6 +4,8 @@ export interface Profile {
   name: string;
   role: string;
   photoUrl: string;
+  /** Only present on me/members when a specific event is selected. */
+  glanceEnabled?: boolean;
 }
 
 export interface Event {
@@ -44,6 +46,28 @@ export interface Conversation {
   leaseUntil?: number;
   recap?: Recap;
   error?: string;
+  consentMode?: "event" | "conversation";
+  /** Immutable capture owner selected when this conversation is created. */
+  captureSource?: "phone" | "glasses";
+  connectedAt?: number;
+  finishMethod?: "gesture" | "button";
+  messages?: ChatMessage[];
+  /** Advisory snapshot only; startRecording rechecks current server authorization. */
+  readyToRecord?: boolean;
+}
+
+export interface ChatMessage {
+  id: string;
+  conversationId: string;
+  senderId: string;
+  text: string;
+  createdAt: number;
+}
+
+export interface EventPermission {
+  enabled: boolean;
+  policyVersion: string;
+  grantedAt?: number;
 }
 
 export interface Snapshot {
@@ -53,6 +77,9 @@ export interface Snapshot {
   members: Profile[];
   /** Only the authenticated user's conversations, never other attendees' sessions. */
   conversations: Conversation[];
+  eventPermission?: EventPermission;
+  /** Global recorder-owned consent/recording session, even when another event is selected. */
+  activeRecorderConversationId?: string;
 }
 
 export interface ProfileInput {
@@ -73,6 +100,12 @@ export interface PresenceTicket {
   expiresAt: number;
 }
 
+export interface StopResult {
+  status: ConversationStatus;
+  /** Explicit null means this stop won before any connection and future finish is closed. */
+  connectedAt: number | null;
+}
+
 export interface GlanceDataClient {
   register(token: string, profile: ProfileInput): Promise<string>;
   updateProfile(token: string, profile: ProfileInput): Promise<void>;
@@ -85,7 +118,14 @@ export interface GlanceDataClient {
   ): () => void;
   createEvent(token: string, title: string, location: string): Promise<string>;
   joinEvent(token: string, inviteCode: string): Promise<string>;
-  createConversation(token: string, eventId: string, partnerId: string): Promise<string>;
+  setEventPermission(token: string, eventId: string, enabled: boolean): Promise<void>;
+  createConversation(
+    token: string,
+    eventId: string,
+    partnerId: string,
+    mode?: "event",
+    source?: "phone" | "glasses",
+  ): Promise<string>;
   consentRecording(token: string, conversationId: string): Promise<void>;
   startRecording(token: string, conversationId: string): Promise<RecordingLease>;
   /**
@@ -98,7 +138,12 @@ export interface GlanceDataClient {
     conversationId: string,
     stillConsenting?: () => boolean,
   ): Promise<RecordingLease | null>;
-  stop(token: string, conversationId: string): Promise<void>;
+  /** Real backend returns StopResult; void only preserves compatibility with legacy adapters. */
+  stop(token: string, conversationId: string): Promise<StopResult | void>;
+  /** Event-mode only. Call after the native microphone has acknowledged closure. */
+  finishConnection(token: string, conversationId: string, method: "gesture" | "button"): Promise<void>;
+  abandonAudio(token: string, conversationId: string): Promise<void>;
+  sendMessage(token: string, conversationId: string, text: string): Promise<string>;
   confirmExchange(token: string, conversationId: string): Promise<void>;
   createUploadUrl(token: string, conversationId: string): Promise<string>;
   attachAudio(
@@ -116,3 +161,4 @@ export interface GlanceDataClient {
 export const RECORDING_FRESHNESS_MS = 5_000;
 export const MAX_RECORDING_MS = 10 * 60_000;
 export const RAW_AUDIO_RETENTION_MS = 15 * 60_000;
+export const EVENT_PERMISSION_POLICY_VERSION = "glance-event-v1";

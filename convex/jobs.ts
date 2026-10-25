@@ -1,21 +1,22 @@
 import { anyApi } from "convex/server";
 import { v } from "convex/values";
-import { internalMutation, internalQuery, type Doc } from "./server";
-import { participants, purgeAudio, clearPresenceTickets } from "./glance";
+import { internalMutation, internalQuery, type Doc, type QueryCtx } from "./server";
+import { participants, purgeAudio, clearPresenceTickets, clearMessages, currentEventGrants, revokeEventConversations } from "./glance";
 import { recapValidator } from "./schema";
 import { MAX_RECORDING_MS, RAW_AUDIO_RETENTION_MS } from "../src/domain";
 
 const jobArgs = { conversationId: v.id("conversations"), generation: v.number() };
-function ready(c: Doc<"conversations"> | null, generation: number) {
+async function ready(ctx: QueryCtx, c: Doc<"conversations"> | null, generation: number) {
   return !!c && c.status === "processing" && c.generation === generation &&
     !!c.audioStorageId && !!c.audioExpiresAt && c.audioExpiresAt > Date.now() &&
-    participants(c).every((id) => c.recordingConsent.includes(id) && c.exchangeConsent.includes(id));
+    participants(c).every((id) => c.recordingConsent.includes(id) && c.exchangeConsent.includes(id)) &&
+    (c.consentMode !== "event" || c.connectedAt !== undefined) && await currentEventGrants(ctx, c);
 }
 export const claim = internalMutation({
   args: jobArgs,
   handler: async (ctx, args) => {
     const c = await ctx.db.get(args.conversationId);
-    if (!ready(c, args.generation) || c!.claimedGeneration === args.generation) return null;
+    if (!await ready(ctx, c, args.generation) || c!.claimedGeneration === args.generation) return null;
     await ctx.db.patch(c!._id, { claimedGeneration: args.generation });
     return {
       storageId: c!.audioStorageId!, startedAt: c!.startedAt!, endedAt: c!.endedAt!,
@@ -24,14 +25,14 @@ export const claim = internalMutation({
 });
 export const canProcess = internalQuery({
   args: jobArgs,
-  handler: async (ctx, args) => ready(await ctx.db.get(args.conversationId), args.generation),
+  handler: async (ctx, args) => ready(ctx, await ctx.db.get(args.conversationId), args.generation),
 });
 export const finish = internalMutation({
   args: { ...jobArgs, recap: v.optional(recapValidator), error: v.optional(v.string()) },
   handler: async (ctx, args) => {
     const c = await ctx.db.get(args.conversationId);
     // Cancellation, deletion, expiration, or a newer attempt makes this result inert.
-    if (!ready(c, args.generation) || c!.claimedGeneration !== args.generation) return false;
+    if (!await ready(ctx, c, args.generation) || c!.claimedGeneration !== args.generation) return false;
     await purgeAudio(ctx, c!);
     if (args.recap && !args.error) {
       await ctx.db.patch(c!._id, { status: "shared", recap: args.recap, error: undefined });
@@ -40,6 +41,15 @@ export const finish = internalMutation({
     }
     return true;
   },
+});
+export const deleteMessages = internalMutation({
+  args: { conversationId: v.id("conversations") },
+  handler: async (ctx, { conversationId }) => clearMessages(ctx, conversationId),
+});
+export const revokeEventSessions = internalMutation({
+  args: { eventId: v.id("events"), profileId: v.id("profiles"), beforeRevision: v.number() },
+  handler: async (ctx, { eventId, profileId, beforeRevision }) =>
+    revokeEventConversations(ctx, eventId, profileId, beforeRevision),
 });
 export const expireRecording = internalMutation({
   args: { conversationId: v.id("conversations") },

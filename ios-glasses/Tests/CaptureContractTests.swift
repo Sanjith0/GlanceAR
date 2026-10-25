@@ -78,4 +78,87 @@ final class CaptureContractTests: XCTestCase {
     XCTAssertFalse(ledger.mayRetainAudio(conversationKey: "conversation", captureID: "active"))
     XCTAssertFalse(ledger.mayRetainAudio(conversationKey: "conversation", captureID: "stopping"))
   }
+
+  func testEventStandingGrantsRequireBothSelectedEventMembers() {
+    XCTAssertTrue(EventModePolicy.standingGrantsValid(eventId: "e", selectedEventId: "e",
+      eventPermissionEnabled: true, participantIDs: ["a", "b"], enabledMemberIDs: ["a", "b"]))
+    XCTAssertFalse(EventModePolicy.standingGrantsValid(eventId: "e", selectedEventId: "other",
+      eventPermissionEnabled: true, participantIDs: ["a", "b"], enabledMemberIDs: ["a", "b"]))
+    XCTAssertFalse(EventModePolicy.standingGrantsValid(eventId: "e", selectedEventId: "e",
+      eventPermissionEnabled: false, participantIDs: ["a", "b"], enabledMemberIDs: ["a", "b"]))
+    XCTAssertFalse(EventModePolicy.standingGrantsValid(eventId: "e", selectedEventId: "e",
+      eventPermissionEnabled: true, participantIDs: ["a", "b"], enabledMemberIDs: ["a"]))
+  }
+
+  func testEventAutoStartRequiresReadinessAndIsOneShot() {
+    XCTAssertTrue(EventModePolicy.canAutomaticallyStart(consentMode: "event", captureSource: "glasses", status: "consent",
+      grantsValid: true, bothRecordingConsent: true, serverReady: true, alreadyAttempted: false))
+    for ready in [false, nil] as [Bool?] {
+      XCTAssertFalse(EventModePolicy.canAutomaticallyStart(consentMode: "event", captureSource: "glasses", status: "consent",
+        grantsValid: true, bothRecordingConsent: true, serverReady: ready, alreadyAttempted: false))
+    }
+    XCTAssertFalse(EventModePolicy.canAutomaticallyStart(consentMode: "event", captureSource: "glasses", status: "consent",
+      grantsValid: true, bothRecordingConsent: true, serverReady: true, alreadyAttempted: true))
+    XCTAssertFalse(EventModePolicy.canAutomaticallyStart(consentMode: "conversation", captureSource: nil, status: "consent",
+      grantsValid: true, bothRecordingConsent: true, serverReady: true, alreadyAttempted: false))
+  }
+
+  func testEventWireUsesMemberGrantFlagsNotParticipantIdentity() throws {
+    let json = """
+    {"me":{"id":"a","name":"A","glanceEnabled":true},"event":{"id":"e"},
+     "eventPermission":{"enabled":true,"policyVersion":"v2"},
+     "members":[{"id":"a","name":"A","glanceEnabled":true},{"id":"b","name":"B","glanceEnabled":true}],
+     "conversations":[{"id":"c","eventId":"e","recorderId":"a","consentMode":"event","captureSource":"glasses",
+       "participants":[{"id":"a","name":"A"},{"id":"b","name":"B"}],"status":"consent",
+       "recordingConsent":["a","b"],"exchangeConsent":[],"readyToRecord":true}]}
+    """
+    let snapshot = try JSONDecoder().decode(BackendSnapshot.self, from: Data(json.utf8))
+    let conversation = try XCTUnwrap(snapshot.conversations.first)
+    XCTAssertTrue(conversation.participants.allSatisfy { $0.glanceEnabled == nil })
+    XCTAssertTrue(EventModePolicy.standingGrantsValid(eventId: conversation.eventId,
+      selectedEventId: snapshot.event?.id, eventPermissionEnabled: snapshot.eventPermission?.enabled == true,
+      participantIDs: conversation.participantIds,
+      enabledMemberIDs: Set((snapshot.members ?? []).filter { $0.glanceEnabled == true }.map(\.id))))
+    XCTAssertNil(conversation.connectedAt)
+    XCTAssertEqual(conversation.readyToRecord, true)
+    XCTAssertEqual(conversation.captureSource, "glasses")
+  }
+
+  func testImmutableEventCaptureSourceRejectsPhoneAndMissingBindings() {
+    XCTAssertTrue(EventModePolicy.mayOwnCapture(consentMode: "event", captureSource: "glasses"))
+    for source in ["phone", nil, "unknown"] as [String?] {
+      XCTAssertFalse(EventModePolicy.mayOwnCapture(consentMode: "event", captureSource: source))
+      XCTAssertFalse(EventModePolicy.canAutomaticallyStart(consentMode: "event", captureSource: source,
+        status: "consent", grantsValid: true, bothRecordingConsent: true,
+        serverReady: true, alreadyAttempted: false))
+    }
+    // Legacy manual conversation consent is intentionally still supported.
+    XCTAssertTrue(EventModePolicy.mayOwnCapture(consentMode: nil, captureSource: nil))
+    XCTAssertTrue(EventModePolicy.mayOwnCapture(consentMode: "conversation", captureSource: nil))
+    XCTAssertFalse(EventModePolicy.mayOwnCapture(consentMode: "unknown", captureSource: "glasses"))
+  }
+
+  func testStopReceiptPreservesPeerFinishWithoutAnySnapshot() throws {
+    let receipt = try JSONDecoder().decode(StopReceipt.self, from: Data(
+      #"{"status":"ended","connectedAt":12345}"#.utf8))
+    XCTAssertEqual(EventStopDisposition.resolve(receipt), .preserveConnectedAudio)
+    // Rendered conversation status and connectedAt are intentionally not inputs.
+    XCTAssertEqual(receipt.connectedAt, 12345)
+  }
+
+  func testFinalNegativeStopAndUnknownStopAreDifferent() throws {
+    let stopped = try JSONDecoder().decode(StopReceipt.self, from: Data(
+      #"{"status":"ended","connectedAt":null}"#.utf8))
+    XCTAssertEqual(EventStopDisposition.resolve(stopped), .discardUnconnectedAudio)
+    XCTAssertEqual(EventStopDisposition.resolve(nil), .retainUntilKnown)
+    XCTAssertEqual(EventStopDisposition.resolve(StopReceipt(status: "consent", connectedAt: nil)), .retainUntilKnown)
+    XCTAssertEqual(EventStopDisposition.resolve(StopReceipt(status: "cancelled", connectedAt: nil)), .discardUnconnectedAudio)
+  }
+
+  func testReadOnlyHarnessPairingCannotAbandonOtherClientsAudio() {
+    // Same account / connected snapshot alone does not prove local ownership.
+    XCTAssertFalse(EventModePolicy.mayReportMissingAudio(hasLocalStart: false, hasOwnedFileRecord: false))
+    XCTAssertTrue(EventModePolicy.mayReportMissingAudio(hasLocalStart: true, hasOwnedFileRecord: false))
+    XCTAssertTrue(EventModePolicy.mayReportMissingAudio(hasLocalStart: false, hasOwnedFileRecord: true))
+  }
 }

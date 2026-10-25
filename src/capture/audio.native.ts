@@ -17,6 +17,12 @@ export function isAudioCaptureAvailable(): boolean {
   return Platform.OS === 'ios' && GlanceAudio !== null;
 }
 
+/** Event-entry preflight only. Never configures the audio session or starts a recorder. */
+export async function requestAudioPermission(): Promise<boolean> {
+  if (!isAudioCaptureAvailable()) return false;
+  return requiredModule().requestPermission();
+}
+
 /** Call only after BOTH participants have explicitly consented. Never starts recording. */
 export async function prepareAudioCapture(captureID: string): Promise<void> {
   await requiredModule().prepare(captureID);

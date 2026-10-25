@@ -1,6 +1,6 @@
 # Glance backend and client contract
 
-This is a tested prototype backend for explicitly paired, authenticated two-person conversations. It never performs face identification, treats a hand gesture as consent, or fabricates a recap when AI processing is unavailable.
+This is a tested prototype backend for explicitly paired, authenticated two-person conversations. It supports both legacy per-conversation approval and an additive event-level informed opt-in; a finish gesture exercises that standing permission, never proves another person's identity or independently supplies their consent.
 
 ## Start locally
 
@@ -41,12 +41,16 @@ Every public function is in the `glance` module. All operations below are mutati
 | `snapshot` | Optional `eventId` | `{me, events, event?, members, conversations}` |
 | `createEvent` | `title`, `location` | Event ID |
 | `joinEvent` | `inviteCode` | Event ID |
-| `createConversation` | `eventId`, `partnerId` | Conversation ID; creator is recorder |
+| `setEventPermission` | `eventId`, `enabled` | `null`; changes only the authenticated person's grant |
+| `createConversation` | `eventId`, `partnerId`, optional `mode:"event"`, optional `source:"phone" \| "glasses"` | Conversation ID; creator is recorder |
 | `consentRecording` | `conversationId` | `null` |
 | `startRecording` | `conversationId` | `{leaseUntil, serverNow}` |
 | `presenceTicket` | `conversationId` | `{ticketId, issuedAt, expiresAt}` or `null` |
 | `heartbeat` | `conversationId`, `ticketId` | `{leaseUntil, serverNow}` or `null` |
-| `stop` | `conversationId` | `null` |
+| `stop` | `conversationId` | `{status, connectedAt:number \| null}` |
+| `finishConnection` | `conversationId`, `method:"gesture" \| "button"` | `null`; event-mode only |
+| `abandonAudio` | `conversationId` | `null`; safe local-file discard reconciliation |
+| `sendMessage` | `conversationId`, `text` | Message ID |
 | `confirmExchange` | `conversationId` | `null` |
 | `createUploadUrl` | `conversationId` | Temporary signed upload URL |
 | `attachAudio` | `conversationId`, `storageId`, `mimeType` | `null` |
@@ -83,6 +87,42 @@ For audio, first call `createUploadUrl`, then `POST` the WAV bytes to that signe
 
 ## Consent and recording lifecycle
 
+### Event-level opt-in
+
+The event-entry UI must present an informed, optional permission before calling `setEventPermission`. Creating or joining an event does not grant recording permission, and one attendee can never grant permission for another account.
+
+The current policy identifier is `glance-event-v1`. An appropriate disclosure must clearly cover all of these actions, rather than describe the permission as merely camera access or gesture detection:
+
+- **Recording:** The user permits recording when explicitly paired with another opted-in attendee in this event, while both authenticated phones provide live foreground presence.
+- **Finish and sharing:** Either participant's explicit finish gesture or Finish button ends recording and connects the pair under both standing permissions, without a second per-conversation exchange prompt.
+- **AI processing:** After that finish, the recorder may upload the WAV and send it to Meta for transcription and summarization. One shared recap appears alongside the paired profile photos in their private chat.
+- **Identity boundary:** The gesture is not identity proof, a selfie is not authentication, and this backend performs no face recognition or biometric identification.
+- **Withdrawal:** Disabling permission prevents new event-mode sessions and cancels unfinished event-mode sessions, including in-flight recap processing. Previously published shared recaps and their chat remain available unless explicitly deleted.
+
+`snapshot(token, eventId)` includes the caller's `eventPermission:{enabled, policyVersion, grantedAt?}` and derives `glanceEnabled` on selected-event `me` and `members`. Those flags are not attached to global profiles or historical conversation participant objects, preventing one event's permission from being mistaken for global approval.
+
+`createConversation(..., "event")` requires both current event grants and snapshots their internal revisions. Recording approval is inherited, but this does not refresh presence: both clients must still complete the same one-time challenge/acknowledgement protocol before the designated recorder can start.
+
+Capture source is an immutable per-conversation binding: the fifth wrapper argument selects `"phone"` or `"glasses"`, event-mode defaults to `"phone"`, and legacy calls that omit it retain an absent field. Clients must gate capture using `conversation.captureSource`, not a mutable global device setting; the native DAT harness accepts event-mode capture only when bound to `"glasses"`, and this routing label is not hardware attestation.
+
+`activeRecorderConversationId` identifies the authenticated recorder's global active consent/recording session using a dedicated status index. It remains available when the selected event or latest-ten conversation list does not contain that session, allowing UI to block device switching without silently transferring an existing capture.
+
+`readyToRecord` is only an advisory snapshot field for automatic-start UI. `startRecording` rechecks all authorization and freshness, returning a structured `ConvexError` with `data.code:"NOT_READY"` only when otherwise-valid approval lacks fresh presence; no writes occur for that rejection, while transport failures remain potentially ambiguous commits and must fail closed.
+
+The microphone must acknowledge local closure before the client calls `finishConnection`. A successful call atomically ends the recording, sets `connectedAt` and `finishMethod`, and activates both exchange approvals from the standing grants; subsequent duplicate finishes preserve the first connection timestamp and method, including after the recording lease later expires.
+
+Ordinary Stop means stop without sharing, not a deferred finish. Its transaction returns an authoritative `{status, connectedAt}` receipt: if finish committed first, it preserves and reports that connection; if Stop committed first, it returns explicit `connectedAt:null` and permanently closes future finish, with no ended-state grace period.
+
+Do not call ordinary server Stop before an explicit finish: the correct order is native microphone closure, then `finishConnection`. A recorder handling a peer finish must reconcile the Stop receipt before discarding its WAV, because a React subscription may still show stale connection state; a missing or ambiguous network receipt is not proof of non-connection.
+
+The chat is usable immediately after connection, before transcription or summary completion. Event-mode uploads require an existing connection and matching current grant revisions, so an ordinary background stop or lease expiry does not itself authorize sharing.
+
+Revocation increments the membership grant revision immediately, fences lease/finish/upload and every processing stage, cancels up to 20 unfinished sessions per cleanup transaction, and schedules continuation for larger histories. Snapshots project any remaining invalid-revision sessions as cancelled until physical cleanup completes; re-enabling permission creates a new revision and cannot resurrect old jobs.
+
+### Legacy per-conversation flow
+
+Omitting `mode` preserves the original manual flow, even if both attendees happen to have enabled event-level permission. Legacy sessions still require independent recording approval and exchange confirmation, and event-level permission changes do not rewrite their consent.
+
 - **Pairing:** Both profiles must already belong to the same event. Pairing is explicit, one participant is designated as recorder, and neither user can have another pending/recording conversation; a pending pairing expires after two minutes.
 - **Recording consent:** Each phone calls `consentRecording` using its own credential after the person sees and accepts the recording disclosure. Repeated calls with the same credential never count as a second person, and approval receipt itself never creates or refreshes live presence.
 - **Presence challenge:** Both phones use the two-step ticket/acknowledgement flow approximately once per second while the consent/recording screen is foregrounded and focused. Ticket issuance requires that participant's recording approval but never renews presence; a valid one-time acknowledgement sets presence to the server-issued ticket's `issuedAt`, never the acknowledgement's receipt time.
@@ -93,7 +133,7 @@ For audio, first call `createUploadUrl`, then `POST` the WAV bytes to that signe
 - **Processing:** The recorder may upload after stopping, but no transcript or summary request starts until both exchange confirmations exist. The backend publishes one recap on the shared conversation record, with both explicitly paired participant profiles.
 - **Cancellation/deletion:** Either participant can cancel or delete for both. Cancellation clears the recap and consent to share and invalidates in-flight processing; deletion removes the conversation record, but cannot retract copies someone already viewed, saved, or exported.
 
-The recording disclosure must make clear that audio will be recorded and that, after both people confirm exchange, it will be sent to Meta for transcription and summarization. A server-side lease cannot stop a malicious or modified recording client; the native microphone watchdog is required, and no camera/gesture inference is an authorization signal.
+The legacy recording disclosure must make clear that audio will be recorded and that, after both people confirm exchange, it will be sent to Meta for transcription and summarization. A server-side lease cannot stop a malicious or modified recording client; the native microphone watchdog is required, and no camera/gesture inference is an authorization signal.
 
 Stopping, cancellation, deletion, pairing timeout, and recording expiry invalidate outstanding tickets; abandoned expired tickets are also swept in bounded batches. The protocol's issuance throttle and bounded ticket count are not substitutes for production account-level abuse controls.
 
@@ -122,6 +162,16 @@ A late acknowledgement checks the old lease first, so a recording cannot restart
 
 The fixed server ticket timestamp closes a receipt-time race: an acknowledgement sent before local withdrawal but delivered afterward can extend permission only until that ticket's original expiry, not until five seconds after late delivery. A ticket request itself may also arrive late, which is why the client must recheck its local withdrawal guard after receiving the ticket and before sending the acknowledgement.
 
+## Shared chat and discarded local recordings
+
+Only authenticated participants may read or write a conversation's chat, after `connectedAt` exists or a legacy recap is shared. Each message stores the authenticated sender, trimmed text of 1 to 2,000 characters, and a server timestamp; snapshots return the newest 50 in chronological order, without fabricating replies.
+
+Deleting a conversation immediately removes chat access for both people and deletes messages in bounded batches of 100, with scheduled continuation for longer histories. Event permission revocation also removes chat from unfinished cancelled sessions, while already-shared recap threads remain connected.
+
+`abandonAudio` is recorder-only and applies only to a connected event session still awaiting its first upload. It marks the recap unavailable, clears the upload grant, blocks stale attachment, and keeps the connection and messages; a stale call after audio has attached, processing has started, or a recap has been shared is a no-op.
+
+An unavailable AI recap does not imply that the connection or chat failed. Do not offer an ineffective server-side recap retry after raw audio has been purged, and never cancel an already-connected conversation merely because a local recording file was discarded.
+
 ## Meta processing and retention
 
 The official file transcription endpoint is `POST https://api.meta.ai/v1/asr/transcribe`, using multipart `request` JSON and `audio` WAV fields, with model `muse-voice-transcribe-1.0` and `audioEncoding:"WAV"` ([Meta speech-to-text guide](https://dev.meta.ai/docs/speech-to-text)). It accepts mono 16-bit integer PCM WAV at 16 or 24 kHz, with a ten-minute duration ceiling, so this backend rejects AAC/M4A/WebM and verifies RIFF chunks, channels, sample rate, bit depth, size, and duration before transmission ([Meta speech-to-text guide](https://dev.meta.ai/docs/speech-to-text)).
@@ -139,17 +189,17 @@ Summarization uses `POST https://api.meta.ai/v1/chat/completions` with `muse-spa
 - **Local files:** The device capture code must enforce its own temporary-file cleanup on success, failure, cancellation, deletion, and local retention expiry. Server cleanup cannot delete files on a disconnected iPhone.
 - **Provider scope:** Deleting application storage does not promise deletion from provider systems, backups, or already transmitted requests. Do not describe Standard mode as zero retention; confirm the deployed provider terms and retention configuration before handling real conversations.
 
-No production Meta credentials or real provider calls were used in the backend tests. Provider-contract tests use deterministic mocked HTTP responses, and the live local smoke intentionally never confirms both exchange consents or invokes a model.
+No production Meta credentials or real provider calls were used in the backend tests. Provider-contract tests use deterministic mocked HTTP responses, and the live local smoke does not upload audio or invoke a model, including when it exercises event-level finish and connection.
 
 ## Verification
 
 ```sh
-npx vitest run tests/backend.test.ts tests/backendClient.test.ts
+npx vitest run tests/backend.test.ts tests/backendEvent.test.ts tests/backendClient.test.ts
 npx tsc -p convex/tsconfig.json --noEmit
 npx tsc --noEmit
 node tests/backendLive.mjs
 ```
 
-`backendLive.mjs` refuses non-loopback hosts. It exercises real local Convex registration, event joining, outsider rejection, pairing, two-person recording consent, lease metadata, partner stop, one-person sharing rejection, deletion, and the native raw HTTP envelope without calling Meta.
+`backendLive.mjs` refuses non-loopback hosts. It exercises real local Convex registration, event joining, outsider rejection, legacy pairing/consent, challenge leases, event-level opt-in, automatic-start readiness, finish/connection, participant-only chat, revocation, deletion, and the native raw HTTP envelope without calling Meta.
 
 The unit/integration suite covers authentication and redaction, profile validation, outsider mutations, unrelated-event-member privacy, two-person consent, one-time presence tickets, delayed withdrawal acknowledgements, ticket expiry and budget bounds, the five-second total freshness boundary, recorder-only upload, independent exchange, generation idempotency, cancellation/deletion races, missing credentials, provider errors, mocked ASR-to-summary success, WAV/schema validation, and orphan cleanup. Remaining validation requires actual iPhones, the native microphone and camera modules, app lifecycle/interruption tests, the DAT glasses hardware, and an operator-approved Meta credential/end-to-end run.

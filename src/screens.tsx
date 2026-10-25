@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, AppState, Platform, Pressable, Text, View } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, AppState, Platform, Pressable, Text, View } from 'react-native';
+import { router, useFocusEffect, useLocalSearchParams, useNavigation, usePreventRemove } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { Badge, Button, Empty, Field, Icon, Notice, Page, Portrait, Wordmark } from './components';
@@ -9,17 +9,28 @@ import { deploymentURL, useGlance } from './state';
 import { samplePeople } from './demo';
 import type { Conversation, Profile } from './domain';
 import { useConversationCapture } from './useConversationCapture';
-import GestureCapture from './capture/GestureCapture';
+import GestureCapture, { copyPrivateSetupJSON } from './capture/GestureCapture';
+import { ConversationChat } from './ConversationChat';
 
+function useScreenFocused() {
+  const [focused, setFocused] = useState(false);
+  useFocusEffect(useCallback(() => {
+    setFocused(true);
+    return () => setFocused(false);
+  }, []));
+  return focused;
+}
 function useOperation() {
   const { run } = useGlance();
   const [busy, setBusy] = useState(false);
-  const perform = async (fn: () => Promise<unknown>) => {
-    if (busy) return;
+  const running = useRef(false);
+  const perform = useCallback(async (fn: () => Promise<unknown>) => {
+    if (running.current) return;
+    running.current = true;
     setBusy(true);
     try { await run(fn); } catch { /* The shared status region shows the failure. */ }
-    finally { setBusy(false); }
-  };
+    finally { running.current = false; setBusy(false); }
+  }, [run]);
   return { busy, perform };
 }
 function GlobalStatus() {
@@ -40,9 +51,9 @@ function DemoBanner({ actors = false }: { actors?: boolean }) {
   const { mode, snapshot, switchActor } = useGlance();
   if (mode !== 'demo') return null;
   return <View style={{ gap: 10 }}>
-    <View style={s.row}><Badge>INTERACTIVE PREVIEW</Badge><Text style={s.small}>No audio recorded</Text></View>
+    <View style={[s.row, { flexWrap: 'wrap' }]}><Badge>INTERACTIVE PREVIEW</Badge><Text style={s.small}>No audio recorded</Text></View>
     {actors && <View style={{ backgroundColor: colors.canvas, borderRadius: 14, padding: 12, gap: 9 }}>
-      <Text style={s.small}>Demo controls: act as either person to try both sides.</Text>
+      <Text style={s.small}>Preview the same chat from either person’s side.</Text>
       <View style={s.row}>{samplePeople.map(p => <Pressable key={p.id} accessibilityRole="button"
         accessibilityLabel={`Switch to ${p.name}`} onPress={() => switchActor(p.id)}
         style={({ pressed }) => [{ flex: 1, padding: 10, borderRadius: 10, flexDirection: 'row', alignItems: 'center', gap: 8,
@@ -63,13 +74,13 @@ function ConversationLink({ conversation }: { conversation: Conversation }) {
   const { snapshot } = useGlance();
   const other = conversation.participants.find(p => p.id !== snapshot?.me.id);
   if (!other) return null;
-  const shared = conversation.status === 'shared';
-  const status = shared ? 'Your shared recap is ready' : ({
-    consent: 'Waiting for recording consent', recording: 'Conversation in progress',
-    ended: 'Confirm your connection', processing: 'Preparing your shared recap',
+  const shared = Boolean(conversation.connectedAt) || conversation.status === 'shared';
+  const status = conversation.status === 'shared' ? 'Your shared recap and chat' : ({
+    consent: 'Getting ready to capture', recording: 'Conversation in progress',
+    ended: shared ? 'Connected · preparing your recap' : 'Stopped without connecting', processing: 'Connected · preparing your recap',
     failed: 'Needs your attention', cancelled: 'Conversation cancelled', shared: 'Your shared recap is ready',
   })[conversation.status];
-  return <Pressable accessibilityRole="button" accessibilityLabel={`${shared ? 'Read recap with' : 'Open conversation with'} ${other.name}`}
+  return <Pressable accessibilityRole="button" accessibilityLabel={`${shared ? 'Open chat with' : 'Open conversation with'} ${other.name}`}
     onPress={() => router.push(shared ? `/recap/${conversation.id}` : `/conversation/${conversation.id}`)}
     style={({ pressed }) => [s.card, s.row, pressed && s.pressed]}>
     <Portrait person={other} /><View style={s.grow}><Text style={s.label}>{other.name}</Text><Text style={s.small}>{status}</Text></View>
@@ -83,9 +94,9 @@ export function EventsScreen() {
   const [title, setTitle] = useState(''), [location, setLocation] = useState(''), [code, setCode] = useState('');
   const { busy, perform } = useOperation();
   const { selectEvent } = app;
-  useEffect(() => { selectEvent(undefined); }, [selectEvent]); // Home shows conversations across events.
+  useFocusEffect(useCallback(() => { selectEvent(undefined); }, [selectEvent]));
   const openEvent = (id: string) => { app.selectEvent(id); router.push(`/event/${id}`); };
-  const active = app.snapshot?.conversations.filter(c => !['shared', 'cancelled'].includes(c.status)) ?? [];
+  const active = app.snapshot?.conversations.filter(c => !c.connectedAt && ['consent', 'recording'].includes(c.status)) ?? [];
   return <Page>
     <View style={s.between}><Wordmark /><Pressable accessibilityRole="button" accessibilityLabel="Open your profile" onPress={() => router.push('/profile')}>
       {app.snapshot ? <Portrait person={app.snapshot.me} size={40} /> : <Icon name="user" />}</Pressable></View>
@@ -137,25 +148,107 @@ export function EventsScreen() {
 export function EventScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const app = useGlance(), { busy, perform } = useOperation();
+  const focused = useScreenFocused();
+  const navigating = useRef(false);
+  const visited = useRef(new Set<string>());
+  const setupAttempted = useRef(false);
+  const entryGeneration = useRef(0);
   const { selectEvent } = app;
-  useEffect(() => { selectEvent(id); }, [id, selectEvent]);
+  useFocusEffect(useCallback(() => {
+    entryGeneration.current++;
+    selectEvent(id);
+    navigating.current = false;
+    return () => { entryGeneration.current++; };
+  }, [id, selectEvent]));
   const event = app.snapshot?.events.find(e => e.id === id);
-  const members = app.snapshot?.members.filter(p => p.id !== app.snapshot?.me.id) ?? [];
+  const selected = app.snapshot?.event?.id === id;
+  const eventMembers = app.snapshot?.members;
+  const meId = app.snapshot?.me.id;
+  const members = useMemo(() => selected ? eventMembers?.filter(p => p.id !== meId) ?? [] : [], [selected, eventMembers, meId]);
+  const enabled = selected && Boolean(app.snapshot?.eventPermission?.enabled);
+  const active = app.snapshot?.conversations.find(c => c.eventId === id && c.consentMode === 'event' && ['consent', 'recording'].includes(c.status));
+  const history = app.snapshot?.conversations.filter(c => c.eventId === id) ?? [];
+  const source = active && active.recorderId === meId ? active.captureSource ?? 'phone' : app.captureSource;
+  const nativePhone = app.mode === 'live' && Platform.OS !== 'web' && source === 'phone';
+  const captureReady = !nativePhone || app.phoneCaptureReady;
+  const { phoneCaptureReady, preparePhoneCapture, run } = app;
+  const pairAttendee = app.pair;
+  const { client, token, mode, demo } = app;
+  const pair = useCallback(async (personId: string) => {
+    if (navigating.current) return;
+    navigating.current = true;
+    const generation = entryGeneration.current;
+    try {
+      const next = await pairAttendee(id, personId);
+      if (generation !== entryGeneration.current) {
+        if (mode === 'demo') demo({ type: 'cancel', id: next });
+        else await client!.cancel(token, next);
+        return;
+      }
+      visited.current.add(next);
+      router.push(`/conversation/${next}`);
+    }
+    catch (error) { navigating.current = false; throw error; }
+  }, [pairAttendee, id, mode, demo, client, token]);
+  useEffect(() => {
+    if (!focused || !enabled || !nativePhone || phoneCaptureReady || setupAttempted.current) return;
+    setupAttempted.current = true;
+    void run(preparePhoneCapture).catch(() => {});
+  }, [focused, enabled, nativePhone, phoneCaptureReady, run, preparePhoneCapture]);
+  useEffect(() => {
+    if (!focused || !enabled || !captureReady || navigating.current) return;
+    if (active && !visited.current.has(active.id)) {
+      visited.current.add(active.id);
+      navigating.current = true;
+      router.push(`/conversation/${active.id}`);
+      return;
+    }
+    if (active) return;
+    const peer = members.find(person => person.glanceEnabled);
+    if (app.mode !== 'demo' || history.length || !peer) return;
+    const timer = setTimeout(() => { void perform(() => pair(peer.id)); }, 1400);
+    return () => clearTimeout(timer);
+  }, [focused, enabled, captureReady, active, app.mode, history.length, members, perform, pair]);
+  const enable = async () => {
+    const generation = entryGeneration.current;
+    if (nativePhone) await app.preparePhoneCapture();
+    if (generation !== entryGeneration.current) return;
+    await app.setEventPermission(id, true);
+  };
   return <Page back title="Your event">
     <DemoBanner /><GlobalStatus />
     {event ? <>
       <View style={{ gap: 12 }}><Badge>YOU’RE IN</Badge><Text style={s.title}>{event.title}</Text>
         <View style={s.row}><Icon name="map-pin" color={colors.muted} size={17} /><Text style={s.muted}>{event.location || 'Location shared by the host'}</Text></View></View>
+      <View style={[s.soft, { gap: 14 }]}>
+        <View style={s.between}><Text style={s.heading}>{enabled ? 'Glance is on.' : 'Be present. We’ll keep the details.'}</Text><Icon name={enabled ? 'radio' : 'mic'} color={colors.blue} /></View>
+        <Text style={s.muted}>{enabled ? 'Ready for your next conversation. No Start button, and no extra confirmation at the end.' : 'Enable Glance once for this event, then let the conversations happen.'}</Text>
+        <Text style={s.small}>Enabling Glance permits recording your paired conversations with other enabled attendees. Either participant’s finish gesture or Finish &amp; connect button creates the connection and shares both portraits, a chat, and the same recap. Audio is sent to Meta’s model API to prepare the recap. You can pause Glance or stop without sharing at any time.</Text>
+        {app.mode === 'demo' && <Text style={[s.small, { color: colors.blue }]}>Permissions here apply only to fictional sample attendees. Encounters and gestures are simulated; no camera or microphone is active.</Text>}
+        {enabled
+          ? <Button tone="secondary" icon="pause" busy={busy} onPress={() => void perform(() => app.setEventPermission(id, false))}>Pause Glance for this event</Button>
+          : <Button icon="check" busy={busy} onPress={() => void perform(enable)}>Enable Glance for this event</Button>}
+        {enabled && nativePhone && !app.phoneCaptureReady && <Button tone="ghost" busy={busy} onPress={() => void perform(app.preparePhoneCapture)}>Prepare this iPhone</Button>}
+      </View>
+      {app.mode === 'live' && Platform.OS === 'ios' && !active && <View style={s.card}>
+        <Text style={s.label}>Your capture setup</Text>
+        <Text style={s.small}>Choose before pairing. The separate glasses harness and this app must never record the same conversation together.</Text>
+        <View style={s.row}>
+          <View style={s.grow}><Button disabled={busy || app.captureChoiceLocked} tone={app.captureSource === 'phone' ? 'primary' : 'secondary'} onPress={() => app.setCaptureSource('phone')}>iPhone camera</Button></View>
+          <View style={s.grow}><Button disabled={busy || app.captureChoiceLocked} tone={app.captureSource === 'glasses' ? 'primary' : 'secondary'} onPress={() => app.setCaptureSource('glasses')}>Glasses harness</Button></View>
+        </View>
+      </View>}
       <View style={[s.soft, s.between]}><View style={{ gap: 4 }}><Text style={s.small}>INVITE A FRIEND</Text><Text selectable style={[s.heading, { letterSpacing: 2 }]}>{event.inviteCode}</Text></View><Icon name="key" color={colors.blue} /></View>
       <View style={s.divider} />
       <Text style={s.heading}>People in the room</Text>
-      <Text style={s.muted}>Find the person you’re talking to. You’ll both approve recording before anything starts.</Text>
-      {members.map(person => <View key={person.id} style={s.card}><PersonRow person={person} />
-        <Button busy={busy} tone="secondary" icon="message-circle" onPress={() => void perform(async () => router.push(`/conversation/${await app.pair(id, person.id)}`))}>Start conversation</Button>
+      <Text style={s.muted}>{app.mode === 'demo' ? 'The preview pairs the sample profiles for you. Come back here to try another encounter.' : 'Face discovery is not implemented in this build. Check the portrait together and select a profile as the prototype fallback.'}</Text>
+      {members.map(person => <View key={person.id} style={s.card}><PersonRow person={person} label={person.glanceEnabled ? 'Glance enabled for this event' : 'Glance is paused'} />
+        <Button busy={busy} disabled={!enabled || !person.glanceEnabled || !captureReady || (app.mode === 'live' && Platform.OS === 'web')}
+          tone="secondary" icon="message-circle" onPress={() => void perform(() => pair(person.id))}>{app.mode === 'demo' ? 'Simulate next encounter' : `Pair with ${person.name.split(' ')[0]}`}</Button>
       </View>)}
       {!members.length && <Empty icon="users" title="Be the first hello." text="Share the invitation code. Other people appear here after they join with their own profile." />}
       {app.snapshot?.conversations.filter(c => c.eventId === id && c.status !== 'cancelled').map(c => <ConversationLink key={c.id} conversation={c} />)}
-      <Notice>Check the name and portrait together before you pair. Selecting an attendee is not consent to record them.</Notice>
+      {app.mode === 'live' && Platform.OS === 'web' && <Notice>The browser can participate and receive chats, but cannot record. Pair from the recording iPhone and keep this participant’s conversation open.</Notice>}
     </> : !app.loading && <Empty icon="calendar" title="Event unavailable" text="Go back to your events, or join with an invitation code." />}
   </Page>;
 }
@@ -163,12 +256,12 @@ export function EventScreen() {
 export function ConnectionsScreen() {
   const app = useGlance();
   const { selectEvent } = app;
-  useEffect(() => { selectEvent(undefined); }, [selectEvent]);
-  const conversations = app.snapshot?.conversations.filter(c => c.status !== 'cancelled') ?? [];
+  useFocusEffect(useCallback(() => { selectEvent(undefined); }, [selectEvent]));
+  const conversations = app.snapshot?.conversations.filter(c => c.status !== 'cancelled' && (c.connectedAt || c.status === 'shared')) ?? [];
   return <Page><View style={{ gap: 9 }}><Text style={s.title}>More than a hello.</Text><Text style={s.muted}>The people, ideas, and next steps you want to keep.</Text></View>
     <DemoBanner /><GlobalStatus />
     {conversations.map(c => <ConversationLink key={c.id} conversation={c} />)}
-    {!conversations.length && <><Empty icon="message-circle" title="Your next connection starts in person." text="Join an event, meet someone, and keep a shared recap after you both agree." />
+    {!conversations.length && <><Empty icon="message-circle" title="Your next connection starts in person." text="Enter an event, have a conversation, and finish with the three-finger gesture. Your shared chat will be right here." />
       <Button onPress={() => router.push('/events')} icon="arrow-right">Find your event</Button></>}
   </Page>;
 }
@@ -185,8 +278,8 @@ export function ProfileScreen() {
     <Text style={s.heading}>Presence, with permission.</Text>
     {[
       { icon: 'image' as const, title: 'A portrait, not a biometric ID', text: 'Your event profile shows your photo. Glance does not match faces or identify people from a camera feed.' },
-      { icon: 'mic' as const, title: 'Two people. Two approvals.', text: 'Both people agree before recording. Both confirm again before an AI recap is shared.' },
-      { icon: 'stop-circle' as const, title: 'An easy way to stop', text: 'Stop capture with the gesture or button. A remote stop depends on connectivity; the recorder’s short consent lease is the fallback.' },
+      { icon: 'mic' as const, title: 'Permission once, at event entry', text: 'Each attendee enables recording and automatic connection sharing for that event. Either person’s finish signal connects you under those standing permissions, without another approval screen.' },
+      { icon: 'stop-circle' as const, title: 'Finish and connect, or just stop', text: 'The finish gesture or Finish & connect button opens your chat. Stop without sharing does not create a connection. Remote stopping depends on connectivity; a short native consent lease is the fallback.' },
     ].map(item => <View key={item.title} style={[s.row, { alignItems: 'flex-start' }]}><View style={{ padding: 10, backgroundColor: colors.blueLight, borderRadius: 12 }}><Icon name={item.icon} color={colors.blue} /></View>
       <View style={[s.grow, { gap: 5 }]}><Text style={s.label}>{item.title}</Text><Text style={s.small}>{item.text}</Text></View></View>)}
     <View style={s.divider} />
@@ -234,7 +327,7 @@ export function EnrollmentScreen() {
     <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: accepted }} accessibilityLabel="Allow event members to see your profile portrait"
       onPress={() => setAccepted(!accepted)} style={[s.row, { alignItems: 'flex-start', paddingVertical: 7 }]}>
       <Icon name={accepted ? 'check-square' : 'square'} color={colors.blue} />
-      <Text style={[s.small, s.grow]}>I agree that members of events I join can see this name and portrait. This does not give anyone permission to record me.</Text>
+      <Text style={[s.small, s.grow]}>Members of events I join can see this name and portrait. Recording and automatic recap sharing are enabled separately, once at event entry.</Text>
     </Pressable>
     <Button busy={busy} disabled={!accepted || !photo || !name.trim()} onPress={() => void perform(async () => {
       await app.saveProfile({ name: name.trim(), role: role.trim(), photoUrl: photo }); router.replace('/events');
@@ -242,31 +335,39 @@ export function EnrollmentScreen() {
   </Page>;
 }
 
-function ApprovalList({ conversation, exchange = false }: { conversation: Conversation; exchange?: boolean }) {
-  const { snapshot } = useGlance();
-  const approvals = exchange ? conversation.exchangeConsent : conversation.recordingConsent;
-  return <View style={s.card}>{conversation.participants.map((p, i) => <React.Fragment key={p.id}>
-    {i > 0 && <View style={s.divider} />}<PersonRow person={p} approved={approvals.includes(p.id)}
-      label={approvals.includes(p.id) ? exchange ? 'Connection confirmed' : 'Recording approved' : p.id === snapshot?.me.id ? 'Your approval is needed' : 'Waiting for their approval'} />
-  </React.Fragment>)}</View>;
-}
 function GlassesHandoff({ conversation }: { conversation: Conversation }) {
   const app = useGlance();
   const [open, setOpen] = useState(false);
   const [revealed, setRevealed] = useState(false);
+  const [copyNotice, setCopyNotice] = useState('');
+  const [copying, setCopying] = useState(false);
   useEffect(() => {
-    const listener = AppState.addEventListener('change', state => { if (state !== 'active') setRevealed(false); });
+    const listener = AppState.addEventListener('change', state => {
+      if (state !== 'active') { setRevealed(false); setCopyNotice(''); }
+    });
     return () => listener.remove();
   }, []);
   if (Platform.OS !== 'ios' || app.mode !== 'live' || app.snapshot?.me.id !== conversation.recorderId || conversation.status !== 'consent') return null;
   return <View style={{ gap: 10 }}>
-    <Button tone="ghost" icon="external-link" onPress={() => { setOpen(!open); setRevealed(false); }}>Use the separate glasses harness</Button>
+    <Button tone="ghost" icon="external-link" onPress={() => { setOpen(!open); setRevealed(false); setCopyNotice(''); }}>Use the separate glasses harness</Button>
     {open && <View style={s.card}><Text style={s.label}>Private device handoff</Text>
-      <Text style={s.small}>This setup contains your device credential. Copy it only into your own Glance DAT Harness. Never share it, include it in screenshots, or paste it into a website. Do not start this app’s recorder as well.</Text>
-      {!revealed ? <Button tone="secondary" onPress={() => setRevealed(true)}>Reveal private setup secret</Button> : <Text selectable style={[s.small, { fontFamily: Platform.OS === 'ios' ? 'Menlo' : undefined, color: colors.ink }]}>{JSON.stringify({
-        deploymentURL, token: app.token, eventId: conversation.eventId, conversationId: conversation.id,
-      })}</Text>}
-      <Text style={s.small}>The other participant keeps their Glance conversation screen open. Confirm the actual glasses camera capability in the harness; Adventurer hardware support has not been verified here.</Text>
+      <Text style={s.small}>This setup contains your device credential. Copy it only into your own Glance DAT Harness. Never share it, include it in screenshots, or paste it into a website. This app’s recorder is disabled for this handoff.</Text>
+      {!revealed ? <Button tone="secondary" onPress={() => setRevealed(true)}>Reveal private setup secret</Button> : <>
+        <Text selectable style={[s.small, { fontFamily: Platform.OS === 'ios' ? 'Menlo' : undefined, color: colors.ink }]}>{JSON.stringify({
+          deploymentURL, token: app.token, eventId: conversation.eventId, conversationId: conversation.id,
+        })}</Text>
+        <Button tone="secondary" icon="copy" busy={copying} onPress={() => {
+          setCopying(true);
+          void copyPrivateSetupJSON(JSON.stringify({ deploymentURL, token: app.token, eventId: conversation.eventId, conversationId: conversation.id }))
+            .then(copied => setCopyNotice(copied
+              ? 'Copied for 60 seconds on this iPhone only. Paste into your own harness now.'
+              : 'Automatic copy is unavailable. Select and copy the complete JSON above.'))
+            .catch(() => setCopyNotice('Could not copy. Select and copy the complete JSON above.'))
+            .finally(() => setCopying(false));
+        }}>Copy setup JSON</Button>
+        {copyNotice ? <Text style={s.small}>{copyNotice}</Text> : null}
+      </>}
+      <Text style={s.small}>Keep the harness foregrounded and the other participant’s Glance conversation open. Authorize the harness microphone and connect the glasses there; capture then starts automatically when both accounts are ready. Adventurer camera capability still needs hardware verification.</Text>
     </View>}
   </View>;
 }
@@ -274,122 +375,192 @@ function GlassesHandoff({ conversation }: { conversation: Conversation }) {
 export function ConversationScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const app = useGlance(), { busy, perform } = useOperation();
+  const focused = useScreenFocused();
+  const navigation = useNavigation();
   const conversation = app.snapshot?.conversations.find(c => c.id === id);
-  const capture = useConversationCapture(conversation);
+  const isRecorder = conversation?.recorderId === app.snapshot?.me.id;
+  const harness = app.mode === 'live' && isRecorder && conversation?.captureSource === 'glasses';
+  const capture = useConversationCapture(conversation, { enabled: !harness });
+  const start = useRef(capture.start);
+  useLayoutEffect(() => { start.current = capture.start; }, [capture.start]);
+  const attempted = useRef(new Set<string>());
   const [clock, setClock] = useState(() => Date.now()), [cameraStatus, setCameraStatus] = useState('');
-  const [discard, setDiscard] = useState(false);
+  const [foreground, setForeground] = useState(AppState.currentState === 'active');
+  const [leaveNotice, setLeaveNotice] = useState(false);
+  const [releasedConversation, setReleasedConversation] = useState<string | null>(null);
+  const blockedNavigation = useRef<(() => void) | null>(null);
+  const unsafeLocalWork = app.mode === 'live' && !harness && !capture.navigationSafe;
+  const preventRemoval = unsafeLocalWork && releasedConversation !== id;
+  const disableRemovalPrevention = usePreventRemove(preventRemoval, ({ repeat }) => {
+    blockedNavigation.current = repeat;
+    askBeforeLeaving();
+  });
+  useLayoutEffect(() => { navigation.setOptions({ gestureEnabled: !preventRemoval }); }, [navigation, preventRemoval]);
+  async function discardAndLeave() {
+    await capture.discardLocal();
+    setReleasedConversation(id);
+    disableRemovalPrevention();
+    const repeat = blockedNavigation.current;
+    blockedNavigation.current = null;
+    if (repeat) repeat(); else router.dismissTo('/connections');
+  }
+  function keepConversationOpen() { setLeaveNotice(false); blockedNavigation.current = null; }
+  function askBeforeLeaving() {
+    setLeaveNotice(true);
+    if (Platform.OS !== 'web') Alert.alert('Leave this conversation?',
+      conversation?.connectedAt
+        ? 'Your connection is saved. Any pending local recording will be discarded; your chat remains available.'
+        : 'Leaving stops capture and discards pending local audio. An unfinished connection will not be shared.',
+      [{ text: 'Stay', style: 'cancel', onPress: keepConversationOpen },
+        { text: 'Discard audio and leave', style: 'destructive', onPress: () => { void perform(discardAndLeave); } }]);
+  }
+  const { selectEvent, demo, mode } = app;
+  const eventId = conversation?.eventId;
+  useFocusEffect(useCallback(() => { if (eventId) selectEvent(eventId); }, [eventId, selectEvent]));
   useEffect(() => { const timer = setInterval(() => setClock(Date.now()), 1000); return () => clearInterval(timer); }, []);
-  useEffect(() => { if (conversation?.status === 'shared') router.replace(`/recap/${id}`); }, [conversation?.status, id]);
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', value => setForeground(value === 'active'));
+    return () => subscription.remove();
+  }, []);
+  useFocusEffect(useCallback(() => () => {
+    if (mode === 'demo') demo({ type: 'stop', id });
+  }, [mode, demo, id]));
+  useEffect(() => {
+    if (app.mode !== 'live' || harness || !focused || !foreground || !isRecorder || !app.phoneCaptureReady
+      || !capture.available || capture.busy || capture.capturing || conversation?.consentMode !== 'event'
+      || conversation.status !== 'consent' || !conversation.readyToRecord) return;
+    if (!attempted.current.has(id)) {
+      attempted.current.add(id);
+      void start.current();
+      return;
+    }
+    if (!capture.autoStartRetryable) return;
+    const timer = setTimeout(() => { void start.current(); }, 1000);
+    return () => clearTimeout(timer);
+  }, [app.mode, app.phoneCaptureReady, harness, focused, foreground, isRecorder, capture.available,
+    capture.busy, capture.capturing, capture.autoStartRetryable, conversation?.consentMode,
+    conversation?.status, conversation?.readyToRecord, id]);
   if (!conversation || !app.snapshot) return <Page back title="Conversation"><GlobalStatus /><Empty icon="message-circle" title="Conversation unavailable" text="Open the conversation from your event or connections." /></Page>;
   const me = app.snapshot.me, other = conversation.participants.find(p => p.id !== me.id)!;
-  const isRecorder = me.id === conversation.recorderId;
-  const bothReady = conversation.participants.every(p => conversation.recordingConsent.includes(p.id));
-  const agreed = conversation.recordingConsent.includes(me.id);
-  const confirmed = conversation.exchangeConsent.includes(me.id);
+  const connected = conversation.status !== 'cancelled' && (Boolean(conversation.connectedAt) || conversation.status === 'shared');
   const elapsed = Math.max(0, Math.floor((clock - (conversation.startedAt ?? clock)) / 1000));
   const timer = `${String(Math.floor(elapsed / 60)).padStart(2, '0')}:${String(elapsed % 60).padStart(2, '0')}`;
-  const consent = () => app.mode === 'demo' ? Promise.resolve(app.demo({ type: 'consent', id })) : app.client!.consentRecording(app.token, id);
-  const exchange = () => app.mode === 'demo' ? Promise.resolve(app.demo({ type: 'exchange', id })) : app.client!.confirmExchange(app.token, id);
+  const backToEvent = () => router.dismissTo(`/event/${conversation.eventId}`);
+  const stop = async (reason: string) => {
+    if (harness) await app.client!.stop(app.token, id);
+    else await capture.stop(reason);
+  };
+  if (connected) return <ConversationChat conversation={conversation} me={me} demo={app.mode === 'demo'}
+    eventTitle={app.snapshot.events.find(event => event.id === conversation.eventId)?.title}
+    previewControls={<DemoBanner actors />} error={app.error}
+    onSend={text => app.run(() => app.sendMessage(id, text))}
+    onBack={() => {
+      if (app.mode === 'demo' || harness || capture.navigationSafe) router.dismissTo('/connections');
+      else askBeforeLeaving();
+    }}
+    onDelete={async () => {
+      if (app.mode === 'demo') app.demo({ type: 'delete', id });
+      else {
+        await app.client!.deleteConversation(app.token, id);
+        await capture.discardLocal();
+      }
+      setReleasedConversation(id);
+      disableRemovalPrevention();
+      router.dismissTo('/connections');
+    }}
+    notice={<>
+      {capture.notice ? <Notice>{capture.notice}</Notice> : null}
+      {app.mode === 'live' && !harness && !capture.navigationSafe && <Notice>Keep this screen open while your recording finishes uploading. Your connection is already saved.</Notice>}
+      {capture.hasUpload && <Button tone="secondary" busy={capture.busy} onPress={() => void capture.retryUpload()}>Retry audio upload</Button>}
+      {leaveNotice && !capture.navigationSafe && <View style={s.card}>
+        <Text style={s.label}>Keep the connection, skip the recap?</Text>
+        <Text style={s.small}>Leaving now discards any pending local audio. Your chat stays available to both of you.</Text>
+        <Button tone="secondary" busy={busy} onPress={() => void perform(discardAndLeave)}>Discard local audio and leave</Button>
+        <Button tone="ghost" onPress={keepConversationOpen}>Stay for the recap</Button>
+      </View>}
+    </>}
+  />;
+  if (conversation.consentMode !== 'event' && conversation.status !== 'cancelled') return <Page back title="Earlier conversation">
+    <Notice>This conversation uses the earlier prototype flow. Return to the event to enable Glance and try the new gesture-to-chat experience.</Notice>
+    <Button onPress={backToEvent}>Back to your event</Button>
+    <Button tone="ghost" busy={busy} onPress={() => void perform(capture.cancel)}>Close earlier conversation</Button>
+  </Page>;
   return <Page back title={`You + ${other.name.split(' ')[0]}`} footer={conversation.status === 'recording' ? <>
-    {app.mode === 'demo' && <Button icon="camera" tone="secondary" onPress={() => void capture.stop('Demo gesture')}>Simulate mutual three-finger gesture</Button>}
-    <Button tone="danger" icon="stop-circle" onPress={() => void capture.stop('You pressed Stop')}>{app.mode === 'demo' ? 'End demo conversation' : 'Stop recording'}</Button>
+    {app.mode === 'demo' ? <Button icon="camera" onPress={() => void capture.stop('gesture')}>Simulate three-finger gesture</Button>
+      : !harness && <Button icon="link" busy={capture.busy} onPress={() => void capture.stop('finish_button')}>Finish &amp; connect</Button>}
+    <Button tone="ghost" icon="stop-circle" busy={busy} onPress={() => void perform(() => stop('ordinary_stop'))}>Stop without sharing</Button>
   </> : undefined}>
-    <DemoBanner actors /><GlobalStatus />
+    <DemoBanner /><GlobalStatus />
+    {leaveNotice && unsafeLocalWork && <View style={s.card}>
+      <Text style={s.label}>Leave this conversation?</Text>
+      <Text style={s.small}>Leaving stops this capture and discards pending local audio. A connection already saved by a finish signal will remain available.</Text>
+      <Button tone="secondary" busy={busy} onPress={() => void perform(discardAndLeave)}>Discard local audio and leave</Button>
+      <Button tone="ghost" onPress={keepConversationOpen}>Stay here</Button>
+    </View>}
     {capture.notice ? <Notice>{capture.notice}</Notice> : null}
     {conversation.status === 'consent' && <>
-      <View style={{ gap: 10 }}><Text style={s.title}>Start with consent.</Text><Text style={s.muted}>Put the phone between you. Stay present with each other.</Text></View>
-      <ApprovalList conversation={conversation} />
-      <Text style={s.body}>Both of you must agree before recording starts. If you later both confirm the connection, your audio is sent to Meta’s model API to create a shared recap.</Text>
-      <Notice>Keep both conversation screens open. Either person can stop. The three-finger gesture ends capture; it cannot identify who consented.</Notice>
-      {!agreed && <Button busy={busy} icon="check" onPress={() => void perform(consent)}>I agree to recording</Button>}
-      {agreed && !bothReady && <Button disabled tone="secondary" onPress={() => {}}>Waiting for the other person</Button>}
-      {bothReady && isRecorder && <Button busy={capture.busy} icon="mic" onPress={() => void capture.start()}>
-        {app.mode === 'demo' ? 'Start demo conversation' : 'Start recording'}
-      </Button>}
-      {bothReady && !isRecorder && <Notice>Both approvals are in. {conversation.participants.find(p => p.id === conversation.recorderId)?.name} can start on their recording device.</Notice>}
-      <GlassesHandoff conversation={conversation} />
-      <Button tone="ghost" onPress={() => void perform(capture.cancel)}>Cancel pairing</Button>
+      <View style={{ gap: 10 }}><Badge>GLANCE IS READY</Badge><Text style={s.title}>Just be here.</Text>
+        <Text style={s.muted}>You and {other.name.split(' ')[0]} enabled Glance at event entry. Capture starts automatically when both phones are ready.</Text></View>
+      <View style={s.card}><PersonRow person={other} /><Text style={s.small}>Keep both conversation screens open. There is no new approval to complete.</Text></View>
+      {harness ? <GlassesHandoff conversation={conversation} /> : <>
+        {isRecorder && !capture.available && <Notice>Live capture needs the iPhone development build with the native audio module. This browser or Expo Go cannot record.</Notice>}
+        {isRecorder && capture.available && !app.phoneCaptureReady && <Button tone="secondary" onPress={backToEvent}>Set up capture at event entry</Button>}
+        {(!isRecorder || capture.available && app.phoneCaptureReady) && <View style={s.row}><ActivityIndicator color={colors.blue} /><Text style={[s.muted, s.grow]}>{capture.busy ? 'Preparing your recording device…' : 'Waiting for both devices to be ready…'}</Text></View>}
+      </>}
+      <Button tone="ghost" busy={busy} onPress={() => void perform(async () => {
+        if (harness) await app.client!.cancel(app.token, id); else await capture.cancel();
+        backToEvent();
+      })}>Leave without recording</Button>
     </>}
     {conversation.status === 'recording' && <>
       <View style={{ alignItems: 'center', gap: 12 }}>
-        <Badge>{app.mode === 'demo' ? 'SIMULATED CONVERSATION' : capture.capturing ? 'MICROPHONE RECORDING' : 'RECORDING ON PAIRED DEVICE'}</Badge>
+        <Badge>{app.mode === 'demo' ? 'SIMULATED ENCOUNTER' : capture.capturing ? 'MICROPHONE RECORDING' : 'RECORDING ON PAIRED DEVICE'}</Badge>
         <Text style={{ fontFamily: fonts.body, fontSize: 58, letterSpacing: -2, color: colors.ink, fontVariant: ['tabular-nums'] }}>{timer}</Text>
         <View style={s.row}><Portrait person={me} size={44} /><Icon name="link" color={colors.muted} size={16} /><Portrait person={other} size={44} /></View>
       </View>
       <View style={[s.soft, { padding: 22, gap: 13 }]}>
-        <View style={s.between}><Text style={s.heading}>Three fingers.{'\n'}A shared finish.</Text><Text style={{ color: colors.blue, fontSize: 50, fontFamily: fonts.bold }}>3</Text></View>
+        <View style={s.between}><Text style={s.heading}>Three fingers.{'\n'}You’re connected.</Text><Text style={{ color: colors.blue, fontSize: 50, fontFamily: fonts.bold }}>3</Text></View>
         <Text style={s.muted}>When you’re done, both hold up your index, middle, and ring fingers in the camera’s view. Fold your thumb and little finger.</Text>
-        <Text style={s.small}>The camera checks for two stable hand signals, not two verified identities. You’ll each confirm the connection afterward.</Text>
+        <Text style={s.small}>The gesture ends this conversation and opens your shared chat, with no extra confirmation. Your event permissions authorize sharing; the camera does not verify whose hands it sees.</Text>
       </View>
       {app.mode === 'live' && capture.capturing && <GestureCapture active source="phone" style={{ height: 260, borderRadius: 18, overflow: 'hidden' }}
-        onStatus={setCameraStatus} onSignal={signal => { if (signal.hands >= 2 && signal.stable) void capture.stop('Three-finger signal detected'); }} />}
+        onStatus={setCameraStatus} onSignal={signal => { if (signal.hands === 2 && signal.stable) void capture.stop('gesture'); }} />}
       {cameraStatus ? <Text style={s.small}>{cameraStatus}</Text> : null}
-      <Text style={[s.small, { textAlign: 'center' }]}>{app.mode === 'demo' ? 'A walkthrough only. No microphone, camera, or AI call is active.' : 'Local Stop closes this recorder immediately. Remote Stop needs a connection; the short consent lease is the fallback. Leaving this screen discards this device’s recording.'}</Text>
+      <Text style={[s.small, { textAlign: 'center' }]}>{app.mode === 'demo' ? 'The encounter and gesture are simulated. No facial recognition, microphone, camera, or AI call is active.' : harness
+        ? 'Capture is owned by your separate glasses harness. Finish and wait for the upload there, then return here for your shared chat.'
+        : 'Either participant can finish using the button under your event permissions. Local Stop closes this recorder; remote Stop needs connectivity, with a short native lease as fallback.'}</Text>
     </>}
     {['ended', 'failed'].includes(conversation.status) && <>
-      <View style={{ gap: 10 }}><Badge green>RECORDING ENDED</Badge>
-        <Text style={s.title}>{conversation.status === 'failed' ? 'Recap unavailable.' : 'Make it mutual.'}</Text>
-        <Text style={s.muted}>{conversation.status === 'failed' ? 'Your conversation has ended. Nothing new will be recorded automatically.' : 'A good conversation is only the beginning.'}</Text></View>
-      {conversation.status === 'ended' && <><ApprovalList conversation={conversation} exchange />
-        <Text style={s.body}>Confirm to save this connection and receive the same AI recap. The recap is shared only after both of you confirm; your event portrait is already visible to event members.</Text></>}
+      <View style={{ gap: 10 }}><Badge>CAPTURE ENDED</Badge><Text style={s.title}>Stopped without sharing.</Text>
+        <Text style={s.muted}>No connection or recap was shared. Glance will not restart this conversation.</Text></View>
       {conversation.error ? <Notice error>{conversation.error}</Notice> : null}
       {capture.hasUpload && <Button tone="secondary" busy={capture.busy} onPress={() => void capture.retryUpload()}>Retry audio upload</Button>}
-      {conversation.status === 'ended' && (!confirmed ? <Button busy={busy} icon="check" onPress={() => void perform(exchange)}>Confirm connection</Button> :
-        <Notice>Your confirmation is in. Waiting for the other participant and the recorder’s upload.</Notice>)}
-      {conversation.status === 'failed' && <><Notice>{capture.hasUpload
-        ? 'The server copy was deleted. You can retry uploading your retained local file, or start a new conversation.'
-        : 'The temporary recording is no longer available. Record a new conversation to try again.'}</Notice>
-        <Button tone="secondary" busy={busy} onPress={() => void perform(async () => {
-          const next = await app.pair(conversation.eventId, other.id);
-          router.replace(`/conversation/${next}`);
-        })}>Start another conversation</Button></>}
-      {!discard ? <Button tone="ghost" onPress={() => setDiscard(true)}>Discard and don’t connect</Button> :
-        <View style={s.card}><Text style={s.label}>Discard this conversation?</Text><Text style={s.small}>This cancels the exchange for both of you and deletes any retained audio. You can start a new conversation later.</Text>
-          <Button tone="danger" busy={busy} onPress={() => void perform(capture.cancel)}>Delete recording and cancel</Button>
-          <Button tone="ghost" onPress={() => setDiscard(false)}>Keep this conversation</Button></View>}
+      <Button tone="secondary" onPress={backToEvent}>Back to your event</Button>
     </>}
     {conversation.status === 'processing' && <View style={[s.card, { paddingVertical: 40, alignItems: 'center' }]}>
       <ActivityIndicator size="large" color={colors.blue} /><Text style={s.heading}>Keeping the good parts.</Text><Text style={[s.muted, { textAlign: 'center' }]}>Preparing one transcript-grounded recap for both of you. It will appear in Connections.</Text>
-      <Button tone="ghost" onPress={() => void perform(capture.cancel)}>Cancel the exchange</Button>
+      <Button tone="ghost" onPress={backToEvent}>Back to your event</Button>
     </View>}
-    {conversation.status === 'cancelled' && <><Empty icon="shield" title="No connection shared." text="The exchange was cancelled. You can always start a fresh conversation when you both want to." />
+    {conversation.status === 'cancelled' && <><Empty icon="shield" title="No connection shared." text="This conversation was cancelled or event permission was withdrawn. Return to the event when you’re ready." />
       <Button onPress={() => router.replace('/events')}>Back to your events</Button></>}
   </Page>;
 }
 
 export function RecapScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const app = useGlance(), { busy, perform } = useOperation();
-  const [deleting, setDeleting] = useState(false);
+  const app = useGlance();
   const conversation = app.snapshot?.conversations.find(c => c.id === id);
   const other = conversation?.participants.find(p => p.id !== app.snapshot?.me.id);
-  if (!conversation?.recap || !other) return <Page back title="Your recap"><GlobalStatus /><Empty icon="file-text" title="This recap isn’t available." text="Both participants must confirm. Deleted conversations no longer have a shared recap." /></Page>;
-  const recap = conversation.recap;
-  return <Page back title="A connection worth keeping">
-    <DemoBanner actors /><GlobalStatus />
-    <View style={{ alignItems: 'center', gap: 12, paddingVertical: 8 }}><Portrait person={other} size={100} />
-      <Text style={s.title}>{other.name}</Text><Text style={s.muted}>{other.role}</Text><Badge green>MUTUALLY CONNECTED</Badge></View>
-    <View style={s.card}>
-      <View style={s.between}><Text style={s.heading}>What you connected over</Text><Icon name="message-circle" color={colors.blue} size={19} /></View>
-      {recap.source === 'sample' && <Badge>SAMPLE RECAP · NOT TRANSCRIBED</Badge>}
-      <Text style={s.body}>{recap.summary}</Text>
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>{recap.topics.map(topic =>
-        <View key={topic} style={{ paddingHorizontal: 11, paddingVertical: 7, backgroundColor: colors.canvas, borderRadius: 8 }}><Text style={s.small}>{topic}</Text></View>)}</View>
-    </View>
-    <View style={{ gap: 16 }}><Text style={s.heading}>Keep the conversation going</Text>
-      {recap.nextSteps.length ? recap.nextSteps.map((step, i) => <View key={`${i}-${step}`} style={[s.row, { alignItems: 'flex-start' }]}>
-        <View style={{ width: 27, height: 27, borderRadius: 9, backgroundColor: colors.blueLight, alignItems: 'center', justifyContent: 'center' }}><Icon name="arrow-up-right" size={15} color={colors.blue} /></View>
-        <Text style={[s.body, s.grow]}>{step}</Text>
-      </View>) : <Text style={s.muted}>No explicit follow-up was captured. Reach out when you have something meaningful to share.</Text>}
-    </View>
-    <View style={s.divider} />
-    <View style={[s.row, { alignItems: 'flex-start' }]}><Icon name="check-circle" color={colors.green} size={18} /><Text style={[s.small, s.grow]}>You both receive this same recap, each with the other person’s portrait. AI can miss details; check anything important together.</Text></View>
-    <Button onPress={() => router.replace('/connections')} icon="arrow-right">Back to connections</Button>
-    {!deleting ? <Button tone="ghost" onPress={() => setDeleting(true)}>Delete this shared recap</Button> :
-      <View style={s.card}><Text style={s.label}>Delete for both participants?</Text><Text style={s.small}>The shared recap will disappear for you and {other.name}. This cannot be undone.</Text>
-        <Button tone="danger" busy={busy} onPress={() => void perform(async () => {
-          if (app.mode === 'demo') app.demo({ type: 'delete', id }); else await app.client!.deleteConversation(app.token, id);
-          router.replace('/connections');
-        })}>Delete for both of us</Button><Button tone="ghost" onPress={() => setDeleting(false)}>Keep the recap</Button></View>}
-  </Page>;
+  if (!conversation || !other || !app.snapshot || conversation.status === 'cancelled'
+    || !(conversation.connectedAt || conversation.status === 'shared')) return <Page back title="Your conversation"><GlobalStatus />
+    <Empty icon="file-text" title="This conversation isn’t available." text="Finish an event conversation with the gesture to open a shared chat. Deleted conversations are no longer available." /></Page>;
+  return <ConversationChat conversation={conversation} me={app.snapshot.me} demo={app.mode === 'demo'}
+    eventTitle={app.snapshot.events.find(event => event.id === conversation.eventId)?.title}
+    previewControls={<DemoBanner actors />} error={app.error}
+    onBack={() => router.dismissTo('/connections')}
+    onSend={text => app.run(() => app.sendMessage(id, text))}
+    onDelete={async () => {
+      if (app.mode === 'demo') app.demo({ type: 'delete', id }); else await app.client!.deleteConversation(app.token, id);
+      router.dismissTo('/connections');
+    }} />;
 }

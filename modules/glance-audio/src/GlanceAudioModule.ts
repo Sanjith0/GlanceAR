@@ -8,6 +8,7 @@ type GlanceAudioEvents = {
 };
 
 declare class GlanceAudioModule extends NativeModule<GlanceAudioEvents> {
+  requestPermission(): Promise<boolean>;
   prepare(captureID: string): Promise<void>;
   createLeaseTicket(): Promise<string>;
   start(remainingMs: number, ticket: string, captureID: string): Promise<void>;

@@ -1,5 +1,6 @@
 import portraits from '../assets/demo-portraits.json';
-import type { Conversation, Event, Profile, Recap, Snapshot } from './domain';
+import type { ChatMessage, Conversation, Event, Profile, Recap, Snapshot } from './domain';
+import { EVENT_PERMISSION_POLICY_VERSION } from './domain';
 
 export const samplePeople: Profile[] = [
   { id: 'alex', name: 'Alex Chen', role: 'Builder · human-centered AI', photoUrl: portraits.alex },
@@ -16,13 +17,16 @@ export interface DemoState {
   people: Profile[];
   events: Event[];
   memberships: Record<string, string[]>;
+  /** Fictional attendees' event-entry permissions, never a grant for a real account. */
+  eventPermissions: Record<string, string[]>;
   conversations: Conversation[];
 }
 export function initialDemo(): DemoState {
   return {
     actor: 'alex', people: [...samplePeople],
     events: [{ id: 'builders', title: 'Builders, after hours', location: 'The studio · Demo event', inviteCode: 'GLANCE2026', hostId: 'alex' }],
-    memberships: { builders: ['alex', 'sam'] }, conversations: [],
+    memberships: { builders: ['alex', 'sam'] },
+    eventPermissions: { builders: ['alex', 'sam'] }, conversations: [],
   };
 }
 export type DemoAction =
@@ -30,24 +34,60 @@ export type DemoAction =
   | { type: 'profile'; profile: Profile }
   | { type: 'event'; event: Event }
   | { type: 'join'; eventId: string }
+  | { type: 'eventPermission'; eventId: string; enabled: boolean }
   | { type: 'pair'; conversation: Conversation }
+  | { type: 'finish'; id: string; method: 'gesture' | 'button' }
+  | { type: 'message'; id: string; message: ChatMessage }
   | { type: 'consent' | 'start' | 'stop' | 'exchange' | 'cancel' | 'delete'; id: string };
 
 /** A visibly labelled in-memory walkthrough. This reducer never records or calls an AI. */
 export function demoReducer(state: DemoState, action: DemoAction): DemoState {
-  if (action.type === 'actor') return { ...state, actor: action.id };
+  if (action.type === 'actor') return state.people.some(p => p.id === action.id) ? { ...state, actor: action.id } : state;
   if (action.type === 'profile') return { ...state, people: state.people.map(p => p.id === action.profile.id ? action.profile : p) };
   if (action.type === 'event') return { ...state, events: [...state.events, action.event], memberships: { ...state.memberships, [action.event.id]: [state.actor] } };
   if (action.type === 'join') return { ...state, memberships: { ...state.memberships, [action.eventId]: [...new Set([...(state.memberships[action.eventId] ?? []), state.actor])] } };
-  if (action.type === 'pair') return { ...state, conversations: [action.conversation, ...state.conversations] };
-  if (action.type === 'delete') return { ...state, conversations: state.conversations.filter(c => c.id !== action.id) };
+  if (action.type === 'eventPermission') {
+    if (!state.memberships[action.eventId]?.includes(state.actor)) return state;
+    const permissions = state.eventPermissions[action.eventId] ?? [];
+    return {
+      ...state,
+      eventPermissions: { ...state.eventPermissions, [action.eventId]: action.enabled
+        ? [...new Set([...permissions, state.actor])] : permissions.filter(id => id !== state.actor) },
+      conversations: action.enabled ? state.conversations : state.conversations.map(c =>
+        c.eventId === action.eventId && c.consentMode === 'event' && c.status !== 'shared' && c.status !== 'cancelled'
+          && c.participants.some(p => p.id === state.actor)
+          ? { ...c, status: 'cancelled', recap: undefined, recordingConsent: [], exchangeConsent: [] } : c),
+    };
+  }
+  if (action.type === 'pair') {
+    const c = action.conversation;
+    if (state.conversations.some(existing => existing.id === c.id)) return state;
+    if (c.consentMode === 'event' && (
+      !c.participants.every(p => state.memberships[c.eventId]?.includes(p.id) && state.eventPermissions[c.eventId]?.includes(p.id))
+      || state.conversations.some(existing => ['consent', 'recording'].includes(existing.status)
+        && existing.participants.some(p => c.participants.some(next => next.id === p.id))))) return state;
+    return { ...state, conversations: [c, ...state.conversations] };
+  }
+  if (action.type === 'delete') return { ...state, conversations: state.conversations.filter(c => c.id !== action.id || !c.participants.some(p => p.id === state.actor)) };
   return { ...state, conversations: state.conversations.map(c => {
     if (c.id !== action.id || !c.participants.some(p => p.id === state.actor)) return c;
-    if (action.type === 'consent' && c.status === 'consent') return { ...c, recordingConsent: [...new Set([...c.recordingConsent, state.actor])] };
-    if (action.type === 'start' && c.status === 'consent' && c.recorderId === state.actor && c.participants.every(p => c.recordingConsent.includes(p.id)))
+    if (action.type === 'finish' && c.consentMode === 'event' && c.status === 'recording') {
+      if (!c.participants.every(p => state.eventPermissions[c.eventId]?.includes(p.id))) return c;
+      const now = Date.now();
+      return { ...c, endedAt: now, connectedAt: now, finishMethod: action.method,
+        exchangeConsent: c.participants.map(p => p.id), status: 'shared', recap: sampleRecap, messages: [] };
+    }
+    if (action.type === 'message' && (c.connectedAt || c.status === 'shared') && c.status !== 'cancelled') {
+      const text = action.message.text.trim();
+      if (!text || text.length > 2000 || action.message.senderId !== state.actor || action.message.conversationId !== c.id) return c;
+      if (c.messages?.some(m => m.id === action.message.id)) return c;
+      return { ...c, messages: [...(c.messages ?? []), { ...action.message, text }].slice(-50) };
+    }
+    if (action.type === 'consent' && c.consentMode !== 'event' && c.status === 'consent') return { ...c, recordingConsent: [...new Set([...c.recordingConsent, state.actor])] };
+    if (action.type === 'start' && c.consentMode !== 'event' && c.status === 'consent' && c.recorderId === state.actor && c.participants.every(p => c.recordingConsent.includes(p.id)))
       return { ...c, status: 'recording', startedAt: Date.now() };
     if (action.type === 'stop' && c.status === 'recording') return { ...c, status: 'ended', endedAt: Date.now() };
-    if (action.type === 'exchange' && c.status === 'ended') {
+    if (action.type === 'exchange' && c.consentMode !== 'event' && c.status === 'ended') {
       const exchangeConsent = [...new Set([...c.exchangeConsent, state.actor])];
       return c.participants.every(p => exchangeConsent.includes(p.id))
         ? { ...c, exchangeConsent, status: 'shared', recap: sampleRecap } : { ...c, exchangeConsent };
@@ -61,9 +101,33 @@ export function demoSnapshot(state: DemoState, eventId?: string): Snapshot {
   const event = events.find(e => e.id === eventId);
   const me = state.people.find(p => p.id === state.actor)!;
   return {
-    me, events, event,
-    members: event ? state.people.filter(p => state.memberships[event.id]?.includes(p.id)) : [],
+    me: event ? { ...me, glanceEnabled: state.eventPermissions[event.id]?.includes(me.id) ?? false } : me,
+    events, event,
+    eventPermission: event ? {
+      enabled: state.eventPermissions[event.id]?.includes(me.id) ?? false,
+      policyVersion: EVENT_PERMISSION_POLICY_VERSION,
+    } : undefined,
+    members: event ? state.people.filter(p => state.memberships[event.id]?.includes(p.id))
+      .map(p => ({ ...p, glanceEnabled: state.eventPermissions[event.id]?.includes(p.id) ?? false })) : [],
     conversations: state.conversations.filter(c => c.participants.some(p => p.id === state.actor))
       .map(c => ({ ...c, participants: c.participants.map(p => state.people.find(fresh => fresh.id === p.id) ?? p) })),
+    activeRecorderConversationId: state.conversations.find(c => c.recorderId === state.actor && ['consent', 'recording'].includes(c.status))?.id,
+  };
+}
+
+export function createDemoEncounter(state: DemoState, eventId: string, partnerId: string, id: string, now = Date.now()): Conversation {
+  const participants = state.people.filter(p => [state.actor, partnerId].includes(p.id));
+  if (state.actor === partnerId || participants.length !== 2
+    || !participants.every(p => state.memberships[eventId]?.includes(p.id)))
+    throw new Error('Both people need to be members of this event.');
+  if (!participants.every(p => state.eventPermissions[eventId]?.includes(p.id)))
+    throw new Error('Both people need Glance enabled for this event.');
+  if (state.conversations.some(c => ['consent', 'recording'].includes(c.status)
+    && c.participants.some(p => [state.actor, partnerId].includes(p.id))))
+    throw new Error('Finish or stop your current conversation first.');
+  return {
+    id, eventId, participants, recorderId: state.actor, consentMode: 'event', captureSource: 'phone',
+    status: 'recording', recordingConsent: participants.map(p => p.id),
+    exchangeConsent: [], startedAt: now, messages: [],
   };
 }

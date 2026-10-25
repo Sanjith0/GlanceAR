@@ -15,6 +15,9 @@ public final class GlanceAudioModule: Module {
     }
     OnDestroy { self.capture.shutdown() }
 
+    AsyncFunction("requestPermission") { (promise: Promise) in
+      self.capture.requestPermission { granted in promise.resolve(granted) }
+    }
     AsyncFunction("prepare") { (captureID: String, promise: Promise) in
       self.capture.prepare(captureID: captureID) { result in
         switch result {

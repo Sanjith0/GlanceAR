@@ -22,6 +22,28 @@ type NativeProps = {
 };
 
 let NativeCapture: React.ComponentType<NativeProps> | null = null;
+
+/** Permission only: this never creates a camera session or starts audio. */
+export async function requestGestureCameraPermission(): Promise<boolean> {
+  if (Platform.OS !== 'ios' || !captureModule) return false;
+  try {
+    return await captureModule.requestCameraPermission();
+  } catch {
+    return false;
+  }
+}
+
+/** Call only from a deliberate Copy action on the already-revealed handoff. */
+export async function copyPrivateSetupJSON(value: string): Promise<boolean> {
+  if (Platform.OS !== 'ios' || !captureModule || !value) return false;
+  try {
+    return await captureModule.copyPrivateSetupJSON(value);
+  } catch {
+    // An unavailable/stale module fails without logging the private payload.
+    return false;
+  }
+}
+
 if (Platform.OS === 'ios' && captureModule) {
   try {
     NativeCapture = requireNativeViewManager<NativeProps>('GlanceCapture');
@@ -90,5 +112,5 @@ const styles = StyleSheet.create({
   explanation: { color: '#455d66', fontSize: 13, lineHeight: 20 },
   caption: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: 12, backgroundColor: 'rgba(0,0,0,0.64)' },
   captionText: { color: '#ffffff', fontSize: 12, lineHeight: 17 },
-  hint: { color: '#bcd1d6', fontSize: 11, lineHeight: 16, marginTop: 4 },
+  hint: { color: '#bcd1d6', fontSize: 12, lineHeight: 16, marginTop: 4 },
 });

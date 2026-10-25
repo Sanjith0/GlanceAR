@@ -24,6 +24,12 @@ export default defineSchema({
   memberships: defineTable({
     eventId: v.id("events"),
     profileId: v.id("profiles"),
+    eventPermission: v.optional(v.object({
+      enabled: v.boolean(),
+      policyVersion: v.string(),
+      grantedAt: v.optional(v.number()),
+      revision: v.number(),
+    })),
   })
     .index("by_event", ["eventId"])
     .index("by_profile", ["profileId"])
@@ -53,11 +59,28 @@ export default defineSchema({
     claimedGeneration: v.optional(v.number()),
     recap: v.optional(recapValidator),
     error: v.optional(v.string()),
+    consentMode: v.optional(v.union(v.literal("event"), v.literal("conversation"))),
+    captureSource: v.optional(v.union(v.literal("phone"), v.literal("glasses"))),
+    eventGrantA: v.optional(v.number()),
+    eventGrantB: v.optional(v.number()),
+    connectedAt: v.optional(v.number()),
+    finishMethod: v.optional(v.union(v.literal("gesture"), v.literal("button"))),
+    finishEligibleUntil: v.optional(v.number()),
+    audioAbandoned: v.optional(v.boolean()),
   })
     .index("by_a", ["participantA"])
     .index("by_b", ["participantB"])
     .index("by_audio", ["audioStorageId"])
-    .index("by_status", ["status"]),
+    .index("by_status", ["status"])
+    .index("by_recorder_status", ["recorderId", "status"])
+    .index("by_event_a_mode_status", ["eventId", "participantA", "consentMode", "status"])
+    .index("by_event_b_mode_status", ["eventId", "participantB", "consentMode", "status"]),
+  messages: defineTable({
+    conversationId: v.id("conversations"),
+    senderId: v.id("profiles"),
+    text: v.string(),
+    createdAt: v.number(),
+  }).index("by_conversation", ["conversationId"]),
   presenceTickets: defineTable({
     conversationId: v.id("conversations"),
     profileId: v.id("profiles"),

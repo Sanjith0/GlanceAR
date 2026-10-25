@@ -3,7 +3,7 @@ import { v, ConvexError } from "convex/values";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { query, mutation, type QueryCtx, type MutationCtx, type Doc, type Id } from "./server";
-import { MAX_RECORDING_MS, RAW_AUDIO_RETENTION_MS, RECORDING_FRESHNESS_MS } from "../src/domain";
+import { MAX_RECORDING_MS, RAW_AUDIO_RETENTION_MS, RECORDING_FRESHNESS_MS, EVENT_PERMISSION_POLICY_VERSION } from "../src/domain";
 import type { Profile, Event, Conversation, Snapshot } from "../src/domain";
 
 const authArgs = { token: v.string() };
@@ -33,6 +33,18 @@ async function member(ctx: QueryCtx, eventId: Id<"events">, profileId: Id<"profi
   const row = await ctx.db.query("memberships").withIndex("by_pair", (q) =>
     q.eq("eventId", eventId).eq("profileId", profileId)).unique();
   if (!row) fail("Event unavailable.");
+  return row!;
+}
+function enabled(membership: Doc<"memberships">) {
+  return membership.eventPermission?.enabled === true &&
+    membership.eventPermission.policyVersion === EVENT_PERMISSION_POLICY_VERSION;
+}
+export async function currentEventGrants(ctx: QueryCtx, c: Doc<"conversations">): Promise<boolean> {
+  if (c.consentMode !== "event") return true;
+  const rows = await Promise.all(participants(c).map((id) =>
+    ctx.db.query("memberships").withIndex("by_pair", (q) => q.eq("eventId", c.eventId).eq("profileId", id)).unique()));
+  return rows.every((row, i) => !!row && enabled(row) &&
+    row.eventPermission!.revision === (i === 0 ? c.eventGrantA : c.eventGrantB));
 }
 function validateProfile(input: { name: string; role: string; photoUrl: string }) {
   if (!input.name.trim() || input.name.length > 80 || input.role.length > 120) {
@@ -50,16 +62,33 @@ function validateProfile(input: { name: string; role: string; photoUrl: string }
   if (!valid) fail("The selfie image format does not match its data.");
   return { name: input.name.trim(), role: input.role.trim(), photoUrl: input.photoUrl };
 }
-function profile(p: Doc<"profiles">): Profile {
-  return { id: p._id, name: p.name, role: p.role, photoUrl: p.photoUrl };
+function profile(p: Doc<"profiles">, glanceEnabled?: boolean): Profile {
+  return {
+    id: p._id, name: p.name, role: p.role, photoUrl: p.photoUrl,
+    ...(glanceEnabled !== undefined ? { glanceEnabled } : {}),
+  };
 }
 function event(e: Doc<"events">): Event {
   return { id: e._id, title: e.title, location: e.location, inviteCode: e.inviteCode, hostId: e.hostId };
 }
 async function viewConversation(ctx: QueryCtx, c: Doc<"conversations">): Promise<Conversation> {
   const people = await Promise.all(participants(c).map((id) => ctx.db.get(id)));
+  const validGrants = await currentEventGrants(ctx, c);
+  // Membership revision is the immediate fence; larger revocation cleanups are
+  // chunked. Never present a queued-for-cleanup session as still connected/live.
+  if (c.consentMode === "event" && !validGrants && c.status !== "shared") {
+    c = {
+      ...c, status: "cancelled", exchangeConsent: [], connectedAt: undefined,
+      finishMethod: undefined, leaseUntil: undefined, recap: undefined,
+      error: c.error ?? "An event recording permission was revoked. This unfinished session was cancelled.",
+    };
+  }
+  const chatAllowed = c.status !== "cancelled" &&
+    (c.status === "shared" || (c.connectedAt !== undefined && validGrants));
+  const messages = chatAllowed ? await ctx.db.query("messages")
+    .withIndex("by_conversation", (q) => q.eq("conversationId", c._id)).order("desc").take(50) : [];
   return {
-    id: c._id, eventId: c.eventId, participants: people.filter((p) => p !== null).map(profile),
+    id: c._id, eventId: c.eventId, participants: people.filter((p) => p !== null).map((p) => profile(p)),
     recorderId: c.recorderId, status: c.status, recordingConsent: c.recordingConsent,
     exchangeConsent: c.exchangeConsent,
     ...(c.startedAt !== undefined ? { startedAt: c.startedAt } : {}),
@@ -67,6 +96,16 @@ async function viewConversation(ctx: QueryCtx, c: Doc<"conversations">): Promise
     ...(c.leaseUntil !== undefined ? { leaseUntil: c.leaseUntil } : {}),
     ...(c.status === "shared" && c.recap && complete(c.exchangeConsent, c) ? { recap: c.recap } : {}),
     ...(c.error ? { error: c.error } : {}),
+    consentMode: c.consentMode ?? "conversation",
+    ...(c.captureSource ? { captureSource: c.captureSource } : {}),
+    ...(c.connectedAt !== undefined ? { connectedAt: c.connectedAt } : {}),
+    ...(c.finishMethod ? { finishMethod: c.finishMethod } : {}),
+    readyToRecord: c.status === "consent" && validGrants && complete(c.recordingConsent, c) &&
+      participants(c).every((id) => (c.lastSeen[id] ?? 0) + RECORDING_FRESHNESS_MS > Date.now()),
+    ...(chatAllowed ? { messages: messages.reverse().map((message) => ({
+      id: message._id, conversationId: message.conversationId, senderId: message.senderId,
+      text: message.text, createdAt: message.createdAt,
+    })) } : {}),
   };
 }
 export async function purgeAudio(ctx: MutationCtx, c: Doc<"conversations">) {
@@ -81,9 +120,54 @@ export async function clearPresenceTickets(ctx: MutationCtx, conversationId: Id<
     .withIndex("by_conversation", (q) => q.eq("conversationId", conversationId)).take(3);
   for (const ticket of tickets) await ctx.db.delete(ticket._id);
 }
+export async function clearMessages(ctx: MutationCtx, conversationId: Id<"conversations">) {
+  const messages = await ctx.db.query("messages")
+    .withIndex("by_conversation", (q) => q.eq("conversationId", conversationId)).take(100);
+  for (const message of messages) await ctx.db.delete(message._id);
+  if (messages.length === 100) await ctx.scheduler.runAfter(0, anyApi.jobs.deleteMessages, { conversationId });
+}
+export async function cancelEventConversation(ctx: MutationCtx, c: Doc<"conversations">) {
+  await purgeAudio(ctx, c);
+  await clearPresenceTickets(ctx, c._id);
+  await clearMessages(ctx, c._id);
+  await ctx.db.patch(c._id, {
+    status: "cancelled", recap: undefined, leaseUntil: undefined, exchangeConsent: [],
+    connectedAt: undefined, finishMethod: undefined, finishEligibleUntil: undefined,
+    error: "An event recording permission was revoked. This unfinished session was cancelled.",
+    generation: c.generation + 1, endedAt: c.endedAt ?? Date.now(),
+  });
+}
+export async function revokeEventConversations(
+  ctx: MutationCtx, eventId: Id<"events">, profileId: Id<"profiles">, beforeRevision: number,
+) {
+  let count = 0;
+  for (const status of ["consent", "recording", "processing", "ended", "failed"] as const) {
+    for (const side of ["a", "b"] as const) {
+      const rows = side === "a"
+        ? await ctx.db.query("conversations").withIndex("by_event_a_mode_status", (q) =>
+          q.eq("eventId", eventId).eq("participantA", profileId).eq("consentMode", "event").eq("status", status))
+          .filter((q) => q.lt(q.field("eventGrantA"), beforeRevision)).take(20 - count)
+        : await ctx.db.query("conversations").withIndex("by_event_b_mode_status", (q) =>
+          q.eq("eventId", eventId).eq("participantB", profileId).eq("consentMode", "event").eq("status", status))
+          .filter((q) => q.lt(q.field("eventGrantB"), beforeRevision)).take(20 - count);
+      for (const c of rows) {
+        await cancelEventConversation(ctx, c);
+        count++;
+      }
+      if (count >= 20) {
+        await ctx.scheduler.runAfter(0, anyApi.jobs.revokeEventSessions, { eventId, profileId, beforeRevision });
+        return;
+      }
+    }
+  }
+}
 async function enqueue(ctx: MutationCtx, c: Doc<"conversations">) {
   if (!["ended", "failed"].includes(c.status) || !c.audioStorageId ||
     !complete(c.recordingConsent, c) || !complete(c.exchangeConsent, c)) return;
+  if (c.consentMode === "event" && (!c.connectedAt || !await currentEventGrants(ctx, c))) {
+    await cancelEventConversation(ctx, c);
+    return;
+  }
   if (!c.audioExpiresAt || c.audioExpiresAt <= Date.now()) {
     await purgeAudio(ctx, c);
     await ctx.db.patch(c._id, { status: "failed", error: "The temporary audio expired. Start a new conversation." });
@@ -121,17 +205,48 @@ export const snapshot = query({
     const selected = args.eventId ? events.find((e) => e._id === args.eventId) : undefined;
     if (args.eventId && !selected) fail("Event unavailable.");
     const members = selected ? await ctx.db.query("memberships").withIndex("by_event", (q) => q.eq("eventId", selected._id)).take(24) : [];
-    const [asA, asB] = await Promise.all([
+    const [asA, asB, activeRecording, activeConsent] = await Promise.all([
       ctx.db.query("conversations").withIndex("by_a", (q) => q.eq("participantA", me._id)).order("desc").take(100),
       ctx.db.query("conversations").withIndex("by_b", (q) => q.eq("participantB", me._id)).order("desc").take(100),
+      ctx.db.query("conversations").withIndex("by_recorder_status", (q) => q.eq("recorderId", me._id).eq("status", "recording")).first(),
+      ctx.db.query("conversations").withIndex("by_recorder_status", (q) => q.eq("recorderId", me._id).eq("status", "consent")).first(),
     ]);
+    const active = activeRecording ?? activeConsent;
+    const activeRecorderConversationId = active && await currentEventGrants(ctx, active) ? active._id : undefined;
     return {
-      me: profile(me), events: events.map(event), ...(selected ? { event: event(selected) } : {}),
-      members: (await Promise.all(members.map((m) => ctx.db.get(m.profileId)))).filter((p) => p !== null).map(profile),
+      me: profile(me, selected ? enabled(memberships.find((m) => m.eventId === selected._id)!) : undefined),
+      events: events.map(event), ...(selected ? { event: event(selected) } : {}),
+      ...(activeRecorderConversationId ? { activeRecorderConversationId } : {}),
+      ...(selected ? { eventPermission: {
+        enabled: enabled(memberships.find((m) => m.eventId === selected._id)!),
+        policyVersion: EVENT_PERMISSION_POLICY_VERSION,
+        ...(memberships.find((m) => m.eventId === selected._id)!.eventPermission?.grantedAt !== undefined
+          ? { grantedAt: memberships.find((m) => m.eventId === selected._id)!.eventPermission!.grantedAt } : {}),
+      } } : {}),
+      members: (await Promise.all(members.map(async (m) => {
+        const p = await ctx.db.get(m.profileId);
+        return p ? profile(p, enabled(m)) : null;
+      }))).filter((p) => p !== null),
       conversations: await Promise.all([...asA, ...asB]
         .filter((c) => !args.eventId || c.eventId === args.eventId)
         .sort((a, b) => b._creationTime - a._creationTime).slice(0, 10).map((c) => viewConversation(ctx, c))),
     };
+  },
+});
+export const setEventPermission = mutation({
+  args: { ...authArgs, eventId: v.id("events"), enabled: v.boolean() },
+  handler: async (ctx, args) => {
+    const me = await authenticate(ctx, args.token);
+    const membership = await member(ctx, args.eventId, me._id);
+    if (membership.eventPermission?.enabled === args.enabled &&
+      membership.eventPermission.policyVersion === EVENT_PERMISSION_POLICY_VERSION) return;
+    const revision = (membership.eventPermission?.revision ?? 0) + 1;
+    await ctx.db.patch(membership._id, { eventPermission: {
+      enabled: args.enabled, policyVersion: EVENT_PERMISSION_POLICY_VERSION, revision,
+      ...(args.enabled ? { grantedAt: Date.now() } :
+        membership.eventPermission?.grantedAt !== undefined ? { grantedAt: membership.eventPermission.grantedAt } : {}),
+    } });
+    if (!args.enabled) await revokeEventConversations(ctx, args.eventId, me._id, revision);
   },
 });
 export const createEvent = mutation({
@@ -169,12 +284,19 @@ export const joinEvent = mutation({
   },
 });
 export const createConversation = mutation({
-  args: { ...authArgs, eventId: v.id("events"), partnerId: v.id("profiles") },
+  args: {
+    ...authArgs, eventId: v.id("events"), partnerId: v.id("profiles"),
+    mode: v.optional(v.literal("event")),
+    source: v.optional(v.union(v.literal("phone"), v.literal("glasses"))),
+  },
   handler: async (ctx, args) => {
     const me = await authenticate(ctx, args.token);
     if (me._id === args.partnerId) fail("Choose another attendee.");
-    await member(ctx, args.eventId, me._id);
-    await member(ctx, args.eventId, args.partnerId);
+    const own = await member(ctx, args.eventId, me._id);
+    const other = await member(ctx, args.eventId, args.partnerId);
+    if (args.mode === "event" && (!enabled(own) || !enabled(other))) {
+      fail("Both attendees must opt in to event recording and gesture sharing.");
+    }
     for (const id of [me._id, args.partnerId]) {
       const all = [
         ...await ctx.db.query("conversations").withIndex("by_a", (q) => q.eq("participantA", id)).order("desc").take(100),
@@ -184,7 +306,11 @@ export const createConversation = mutation({
     }
     const conversationId = await ctx.db.insert("conversations", {
       eventId: args.eventId, participantA: me._id, participantB: args.partnerId, recorderId: me._id,
-      status: "consent", recordingConsent: [], exchangeConsent: [], lastSeen: {}, ticketIssuedAt: {}, generation: 0,
+      status: "consent", recordingConsent: args.mode === "event" ? [me._id, args.partnerId] : [],
+      exchangeConsent: [], lastSeen: {}, ticketIssuedAt: {}, generation: 0,
+      consentMode: args.mode ?? "conversation",
+      ...(args.source || args.mode === "event" ? { captureSource: args.source ?? "phone" } : {}),
+      ...(args.mode === "event" ? { eventGrantA: own.eventPermission!.revision, eventGrantB: other.eventPermission!.revision } : {}),
     });
     await ctx.scheduler.runAfter(120_000, anyApi.jobs.expireConsent, { conversationId });
     return conversationId;
@@ -195,6 +321,7 @@ export const consentRecording = mutation({
   handler: async (ctx, args) => {
     const { me, c } = await session(ctx, args.token, args.conversationId);
     if (c.status !== "consent") fail("Recording consent is closed.");
+    if (!await currentEventGrants(ctx, c)) fail("Event recording permission is no longer valid.");
     await ctx.db.patch(c._id, {
       recordingConsent: [...new Set([...c.recordingConsent, me._id])],
     });
@@ -206,9 +333,10 @@ export const startRecording = mutation({
     const { me, c } = await session(ctx, args.token, args.conversationId);
     if (me._id !== c.recorderId) fail("Only the designated recorder can start.");
     if (c.status !== "consent" || !complete(c.recordingConsent, c)) fail("Both people must consent before recording.");
+    if (!await currentEventGrants(ctx, c)) fail("Event recording permission is no longer valid.");
     const now = Date.now();
     const leaseUntil = Math.min(...participants(c).map((id) => c.lastSeen[id] ?? 0)) + RECORDING_FRESHNESS_MS;
-    if (leaseUntil <= now) fail("Both phones must be online to start.");
+    if (leaseUntil <= now) throw new ConvexError({ code: "NOT_READY", message: "Both phones must be online to start." });
     await ctx.db.patch(c._id, { status: "recording", startedAt: now, leaseUntil });
     await ctx.scheduler.runAfter(RECORDING_FRESHNESS_MS, anyApi.jobs.expireRecording, { conversationId: c._id });
     return { leaseUntil, serverNow: now };
@@ -220,6 +348,7 @@ export const presenceTicket = mutation({
     const { me, c } = await session(ctx, args.token, args.conversationId);
     const now = Date.now();
     if (!["consent", "recording"].includes(c.status) || !c.recordingConsent.includes(me._id)) return null;
+    if (!await currentEventGrants(ctx, c)) return null;
     if (c.status === "recording" &&
       (!c.leaseUntil || c.leaseUntil <= now || now >= c.startedAt! + MAX_RECORDING_MS)) {
       await ctx.db.patch(c._id, { status: "ended", endedAt: Math.min(now, c.leaseUntil ?? now), leaseUntil: undefined });
@@ -251,6 +380,7 @@ export const heartbeat = mutation({
   handler: async (ctx, args) => {
     const { me, c } = await session(ctx, args.token, args.conversationId);
     const now = Date.now();
+    if (!await currentEventGrants(ctx, c)) return null;
     // Check the previous lease before handling any delayed acknowledgement.
     if (c.status === "recording" &&
       (!c.leaseUntil || c.leaseUntil <= now || now >= c.startedAt! + MAX_RECORDING_MS)) {
@@ -284,15 +414,94 @@ export const stop = mutation({
   args: sessionArgs,
   handler: async (ctx, args) => {
     const { c } = await session(ctx, args.token, args.conversationId);
-    if (c.status !== "recording") return;
-    await ctx.db.patch(c._id, { status: "ended", endedAt: Math.min(Date.now(), c.leaseUntil ?? Date.now()), leaseUntil: undefined });
+    const now = Date.now();
+    if (c.consentMode === "event" && c.status !== "shared" && c.status !== "cancelled" &&
+      !await currentEventGrants(ctx, c)) {
+      await cancelEventConversation(ctx, c);
+      return { status: "cancelled" as const, connectedAt: null };
+    }
+    if (c.consentMode === "event" && c.status === "consent") {
+      await ctx.db.patch(c._id, {
+        status: "cancelled", endedAt: now, exchangeConsent: [], finishEligibleUntil: undefined,
+        generation: c.generation + 1,
+      });
+      await clearPresenceTickets(ctx, c._id);
+      return { status: "cancelled" as const, connectedAt: null };
+    }
+    if (c.status === "recording") {
+      await ctx.db.patch(c._id, {
+        status: "ended", endedAt: Math.min(now, c.leaseUntil ?? now),
+        leaseUntil: undefined, finishEligibleUntil: undefined,
+      });
+      await clearPresenceTickets(ctx, c._id);
+      return { status: "ended" as const, connectedAt: c.connectedAt ?? null };
+    }
+    // Linearizable reconciliation: if finish won first, preserve its connection.
+    // If stop won first, finish now rejects ended status permanently.
+    return { status: c.status, connectedAt: c.connectedAt ?? null };
+  },
+});
+export const finishConnection = mutation({
+  args: { ...sessionArgs, method: v.union(v.literal("gesture"), v.literal("button")) },
+  handler: async (ctx, args) => {
+    const { c } = await session(ctx, args.token, args.conversationId);
+    if (c.consentMode !== "event") fail("This session uses per-conversation sharing consent.");
+    if (c.status === "cancelled") fail("This session was cancelled.");
+    if (c.connectedAt !== undefined && c.status === "shared") return;
+    if (!await currentEventGrants(ctx, c)) fail("Both current event permissions are required to connect.");
+    if (c.connectedAt !== undefined) return;
+    const now = Date.now();
+    const deadline = c.status === "recording" ? c.leaseUntil : undefined;
+    const freshUntil = Math.min(...participants(c).map((id) => (c.lastSeen[id] ?? 0) + RECORDING_FRESHNESS_MS));
+    if (!c.startedAt || !deadline || deadline <= now || freshUntil <= now ||
+      now >= c.startedAt + MAX_RECORDING_MS || !complete(c.recordingConsent, c)) {
+      fail("The live recording window ended. Start another conversation to connect.");
+    }
+    const next = {
+      ...c, status: "ended" as const, endedAt: c.endedAt ?? now, connectedAt: now,
+      finishMethod: args.method, exchangeConsent: participants(c), leaseUntil: undefined, finishEligibleUntil: undefined,
+    };
+    await ctx.db.patch(c._id, {
+      status: next.status, endedAt: next.endedAt, connectedAt: now, finishMethod: args.method,
+      exchangeConsent: next.exchangeConsent, leaseUntil: undefined, finishEligibleUntil: undefined,
+    });
     await clearPresenceTickets(ctx, c._id);
+    await enqueue(ctx, next);
+  },
+});
+export const sendMessage = mutation({
+  args: { ...sessionArgs, text: v.string() },
+  handler: async (ctx, args) => {
+    const { me, c } = await session(ctx, args.token, args.conversationId);
+    const text = args.text.trim();
+    if (!text || text.length > 2000 || new TextEncoder().encode(text).byteLength > 8000) {
+      fail("Messages must contain 1 to 2,000 characters.");
+    }
+    if (c.status === "cancelled" || (c.status !== "shared" &&
+      (c.connectedAt === undefined || !await currentEventGrants(ctx, c)))) fail("This shared chat is unavailable.");
+    return ctx.db.insert("messages", { conversationId: c._id, senderId: me._id, text, createdAt: Date.now() });
+  },
+});
+export const abandonAudio = mutation({
+  args: sessionArgs,
+  handler: async (ctx, args) => {
+    const { me, c } = await session(ctx, args.token, args.conversationId);
+    if (me._id !== c.recorderId || c.consentMode !== "event" || c.connectedAt === undefined) {
+      fail("Only the recorder can discard this connected recording.");
+    }
+    // A delayed discard must never erase an upload/processing result that won the race.
+    if (c.status !== "ended" || c.audioStorageId || c.recap) return;
+    await ctx.db.patch(c._id, {
+      status: "failed", error: "The local recording was discarded. Your connection and chat remain available.",
+      uploadGrantedUntil: undefined, audioAbandoned: true, generation: c.generation + 1,
+    });
   },
 });
 export const confirmExchange = mutation({
   args: sessionArgs,
   handler: async (ctx, args) => {
     const { me, c } = await session(ctx, args.token, args.conversationId);
+    if (c.consentMode === "event") fail("Finish an event connection with a gesture or finish button.");
     if (!["ended", "failed", "processing", "shared"].includes(c.status)) fail("End recording before sharing.");
     if (!complete(c.recordingConsent, c) || !c.startedAt) fail("No consented recording exists.");
     if (c.exchangeConsent.includes(me._id)) return;
@@ -307,6 +516,10 @@ export const createUploadUrl = mutation({
     const { me, c } = await session(ctx, args.token, args.conversationId);
     if (me._id !== c.recorderId || !["ended", "failed"].includes(c.status) ||
       !complete(c.recordingConsent, c) || !c.startedAt) fail("Only the recorder can upload an ended recording.");
+    if (c.audioAbandoned) fail("This recording was discarded. Your connection and chat remain available.");
+    if (c.consentMode === "event" && (c.connectedAt === undefined || !await currentEventGrants(ctx, c))) {
+      fail("An authorized event connection is required before uploading.");
+    }
     await ctx.db.patch(c._id, { uploadGrantedUntil: Date.now() + RAW_AUDIO_RETENTION_MS });
     return ctx.storage.generateUploadUrl();
   },
@@ -316,6 +529,8 @@ export const attachAudio = mutation({
   handler: async (ctx, args) => {
     const { me, c } = await session(ctx, args.token, args.conversationId);
     if (me._id !== c.recorderId) fail("Only the recorder can attach audio.");
+    if (c.audioAbandoned || (c.consentMode === "event" &&
+      (c.connectedAt === undefined || !await currentEventGrants(ctx, c)))) fail("This event upload is no longer authorized.");
     if (c.audioStorageId === args.storageId) return;
     if (!["ended", "failed"].includes(c.status) || !c.uploadGrantedUntil ||
       c.uploadGrantedUntil <= Date.now() || c.audioStorageId) fail("This upload is not authorized.");
@@ -350,9 +565,11 @@ export const cancel = mutation({
     const { c } = await session(ctx, args.token, args.conversationId);
     await purgeAudio(ctx, c);
     await clearPresenceTickets(ctx, c._id);
+    await clearMessages(ctx, c._id);
     await ctx.db.patch(c._id, {
       status: "cancelled", recap: undefined, error: undefined, leaseUntil: undefined,
       exchangeConsent: [], generation: c.generation + 1, endedAt: c.endedAt ?? Date.now(),
+      connectedAt: undefined, finishMethod: undefined, finishEligibleUntil: undefined,
     });
   },
 });
@@ -362,6 +579,7 @@ export const deleteConversation = mutation({
     const { c } = await session(ctx, args.token, args.conversationId);
     await purgeAudio(ctx, c);
     await clearPresenceTickets(ctx, c._id);
+    await clearMessages(ctx, c._id);
     await ctx.db.delete(c._id);
   },
 });

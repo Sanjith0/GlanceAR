@@ -77,6 +77,19 @@ final class LeaseAudioRecorder: NSObject, AVAudioRecorderDelegate {
     recorder?.stop()
   }
 
+  /// Event-entry permission preflight only. No session activation, routing,
+  /// preparation, capture identity, lease, or recorder state is changed here.
+  func requestPermission(completion: @escaping (Bool) -> Void) {
+    DispatchQueue.main.async {
+      switch self.session.recordPermission {
+      case .granted: completion(true)
+      case .denied: completion(false)
+      case .undetermined: self.session.requestRecordPermission(completion)
+      @unknown default: completion(false)
+      }
+    }
+  }
+
   /// Caller has obtained two-party consent before this OS permission request.
   func prepare(completion: @escaping (Result<Void, Error>) -> Void) {
     prepare(captureID: UUID().uuidString, completion: completion)

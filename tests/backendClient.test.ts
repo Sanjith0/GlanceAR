@@ -53,6 +53,28 @@ it("does not deliver a renewal when withdrawal happened while the ACK was in fli
   expect(await client.heartbeat("token", "conversation", () => stillConsenting)).toBeNull();
   expect(fake.mutation).toHaveBeenCalledTimes(2);
 });
+it("keeps manual pairing backward compatible and sends event-mode/grant/finish/chat args explicitly", async () => {
+  const client = createGlanceClient("https://example.convex.cloud");
+  await client.createConversation("token", "event", "partner");
+  expect(fake.mutation.mock.calls[0][1]).toEqual({ token: "token", eventId: "event", partnerId: "partner" });
+  await client.createConversation("token", "event", "partner", "event");
+  expect(fake.mutation.mock.calls[1][1]).toEqual({ token: "token", eventId: "event", partnerId: "partner", mode: "event" });
+  await client.setEventPermission("token", "event", true);
+  expect(getFunctionName(fake.mutation.mock.calls[2][0])).toBe("glance:setEventPermission");
+  expect(fake.mutation.mock.calls[2][1]).toEqual({ token: "token", eventId: "event", enabled: true });
+  await client.finishConnection("token", "conversation", "gesture");
+  expect(fake.mutation.mock.calls[3][1]).toEqual({ token: "token", conversationId: "conversation", method: "gesture" });
+  await client.sendMessage("token", "conversation", "Hello");
+  expect(fake.mutation.mock.calls[4][1]).toEqual({ token: "token", conversationId: "conversation", text: "Hello" });
+  await client.abandonAudio("token", "conversation");
+  expect(getFunctionName(fake.mutation.mock.calls[5][0])).toBe("glance:abandonAudio");
+  fake.mutation.mockResolvedValueOnce({ status: "ended", connectedAt: null });
+  expect(await client.stop("token", "conversation")).toEqual({ status: "ended", connectedAt: null });
+  await client.createConversation("token", "event", "partner", "event", "glasses");
+  expect(fake.mutation.mock.calls[7][1]).toEqual({
+    token: "token", eventId: "event", partnerId: "partner", mode: "event", source: "glasses",
+  });
+});
 it("subscription delivers values, reports errors, and unsubscribes", () => {
   const client = createGlanceClient("https://example.convex.cloud");
   const onValue = vi.fn(); const onError = vi.fn();

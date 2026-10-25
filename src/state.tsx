@@ -1,8 +1,10 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { GlanceDataClient, ProfileInput, Snapshot } from './domain';
 import { createGlanceClient } from './data/convexClient';
-import { demoReducer, demoSnapshot, initialDemo, type DemoAction } from './demo';
+import { createDemoEncounter, demoReducer, demoSnapshot, initialDemo, type DemoAction } from './demo';
 import { getDeviceToken } from './session';
+import { isAudioCaptureAvailable, requestAudioPermission } from './capture/audio';
+import { requestGestureCameraPermission } from './capture/GestureCapture';
 
 export const deploymentURL = process.env.EXPO_PUBLIC_CONVEX_URL ?? '';
 interface GlanceState {
@@ -24,7 +26,15 @@ interface GlanceState {
   saveProfile: (profile: ProfileInput) => Promise<void>;
   createEvent: (title: string, location: string) => Promise<string>;
   joinEvent: (code: string) => Promise<string>;
+  setEventPermission: (eventId: string, enabled: boolean) => Promise<void>;
   pair: (eventId: string, partnerId: string) => Promise<string>;
+  finishConnection: (id: string, method: 'gesture' | 'button') => Promise<void>;
+  sendMessage: (id: string, text: string) => Promise<void>;
+  captureSource: 'phone' | 'glasses';
+  setCaptureSource: (source: 'phone' | 'glasses') => void;
+  phoneCaptureReady: boolean;
+  preparePhoneCapture: () => Promise<void>;
+  captureChoiceLocked: boolean;
 }
 const Context = createContext<GlanceState | null>(null);
 export function GlanceProvider({ children }: { children: React.ReactNode }) {
@@ -36,6 +46,23 @@ export function GlanceProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(Boolean(deploymentURL));
   const [needsEnrollment, setNeedsEnrollment] = useState(false);
+  const [captureSource, setCaptureSourceState] = useState<'phone' | 'glasses'>('phone');
+  const [pairing, setPairing] = useState(false);
+  const pairingInFlight = useRef(false);
+  const [phoneCaptureReady, setPhoneCaptureReady] = useState(false);
+  const permissionRequest = useRef<Promise<void> | null>(null);
+  const preparePhoneCapture = useCallback(() => {
+    if (permissionRequest.current) return permissionRequest.current;
+    const request = (async () => {
+      if (!isAudioCaptureAvailable()) throw new Error('Capture requires the iPhone development build, not Expo Go or a browser.');
+      if (!await requestAudioPermission()) throw new Error('Microphone permission is off. Enable it in iPhone Settings before using Glance capture.');
+      if (!await requestGestureCameraPermission()) throw new Error('Camera permission is off. Enable it in iPhone Settings for the three-finger finish.');
+      setPhoneCaptureReady(true);
+    })();
+    permissionRequest.current = request;
+    void request.finally(() => { if (permissionRequest.current === request) permissionRequest.current = null; }).catch(() => {});
+    return request;
+  }, []);
   const client = useMemo(() => deploymentURL ? createGlanceClient(deploymentURL) : null, []);
   const requestSequence = useRef(0);
   const refresh = useCallback(async () => {
@@ -110,22 +137,51 @@ export function GlanceProvider({ children }: { children: React.ReactNode }) {
     dispatch({ type: 'join', eventId: event.id }); return event.id;
   };
   const pair = async (eventId: string, partnerId: string) => {
-    if (mode === 'live') return client!.createConversation(token, eventId, partnerId);
-    if (sample.conversations.some(c => ['consent', 'recording'].includes(c.status) && c.participants.some(p => [sample.actor, partnerId].includes(p.id))))
-      throw new Error('Finish or cancel your current conversation first.');
-    const id = `conversation-${Date.now()}`;
-    dispatch({ type: 'pair', conversation: {
-      id, eventId, participants: sample.people.filter(p => [sample.actor, partnerId].includes(p.id)),
-      recorderId: sample.actor, status: 'consent', recordingConsent: [], exchangeConsent: [],
+    if (pairingInFlight.current) throw new Error('Your previous encounter is still being paired.');
+    pairingInFlight.current = true;
+    setPairing(true);
+    // Capture the choice before any network wait; the server persists it on this
+    // conversation, so subsequent events or process restarts cannot change ownership.
+    const source = captureSource;
+    try {
+      if (mode === 'live') return await client!.createConversation(token, eventId, partnerId, 'event', source);
+      const id = `conversation-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      dispatch({ type: 'pair', conversation: createDemoEncounter(sample, eventId, partnerId, id) });
+      return id;
+    } finally { pairingInFlight.current = false; setPairing(false); }
+  };
+  const setEventPermission = async (eventId: string, enabled: boolean) => {
+    if (mode === 'live') await client!.setEventPermission(token, eventId, enabled);
+    else dispatch({ type: 'eventPermission', eventId, enabled });
+  };
+  const finishConnection = async (id: string, method: 'gesture' | 'button') => {
+    if (mode === 'live') await client!.finishConnection(token, id, method);
+    else dispatch({ type: 'finish', id, method });
+  };
+  const sendMessage = async (id: string, text: string) => {
+    const value = text.trim();
+    if (!value || value.length > 2000) throw new Error('Write a message between 1 and 2,000 characters.');
+    if (mode === 'live') { await client!.sendMessage(token, id, value); return; }
+    const conversation = sample.conversations.find(c => c.id === id);
+    if (!conversation || !(conversation.connectedAt || conversation.status === 'shared') || conversation.status === 'cancelled'
+      || !conversation.participants.some(p => p.id === sample.actor)) throw new Error('This connection is not available.');
+    dispatch({ type: 'message', id, message: {
+      id: `message-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      conversationId: id, senderId: sample.actor, text: value, createdAt: Date.now(),
     } });
-    return id;
   };
   const snapshot = mode === 'demo' ? demoSnapshot(sample, selectedEvent) : liveSnapshot;
+  const captureChoiceLocked = pairing || Boolean(snapshot?.activeRecorderConversationId);
+  const setCaptureSource = (source: 'phone' | 'glasses') => {
+    if (pairingInFlight.current || snapshot?.activeRecorderConversationId) return;
+    setCaptureSourceState(source);
+  };
   return <Context.Provider value={{
     mode, setMode, snapshot, selectedEvent, selectEvent, error, clearError: () => setError(''),
     loading: mode === 'live' && loading, needsEnrollment: mode === 'live' && needsEnrollment,
     token, client, switchActor: id => dispatch({ type: 'actor', id }), demo: dispatch,
-    run, refresh, saveProfile, createEvent, joinEvent, pair,
+    run, refresh, saveProfile, createEvent, joinEvent, pair, setEventPermission, finishConnection, sendMessage,
+    captureSource, setCaptureSource, phoneCaptureReady, preparePhoneCapture, captureChoiceLocked,
   }}>{children}</Context.Provider>;
 }
 export function useGlance(): GlanceState {

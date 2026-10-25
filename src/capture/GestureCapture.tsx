@@ -3,6 +3,12 @@ import { View, Text, type StyleProp, type ViewStyle } from 'react-native';
 import { Icon } from '../components';
 import { colors, s } from '../theme';
 
+/** Browser preview never requests a camera or pretends a native permission exists. */
+export async function requestGestureCameraPermission(): Promise<boolean> { return false; }
+
+/** Private setup copying is an explicit, local-only native action, never a web API. */
+export async function copyPrivateSetupJSON(_value: string): Promise<boolean> { return false; }
+
 export default function GestureCapture({ active, style }: {
   active: boolean; source?: 'phone' | 'glasses';
   onSignal: (event: { hands: number; stable: boolean; source: 'phone' | 'glasses' }) => void;
