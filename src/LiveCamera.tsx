@@ -65,7 +65,7 @@ export function LiveCameraScreen() {
   const app = useGlance(), { busy } = useOperation();
   const cameraDevice = useCameraDevice();
   const wearingGlasses = useRef(cameraDevice === 'glasses');
-  wearingGlasses.current = cameraDevice === 'glasses';
+  useLayoutEffect(() => { wearingGlasses.current = cameraDevice === 'glasses'; }, [cameraDevice]);
   const focused = useScreenFocused();
   const { width, height } = useWindowDimensions();
   const { selectEvent } = app;
