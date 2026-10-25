@@ -21,6 +21,16 @@ export interface Recap {
   topics: string[];
   nextSteps: string[];
   source: "ai" | "sample";
+  /** Demo summaries only: anonymous diarized turns, shown behind a button. */
+  transcript?: SpeakerTurn[];
+}
+
+/** "Speaker 1", "Speaker 2"… by first appearance; never a participant identity. */
+export interface SpeakerTurn {
+  speaker: string;
+  startMs: number;
+  endMs: number;
+  text: string;
 }
 
 export type ConversationStatus =

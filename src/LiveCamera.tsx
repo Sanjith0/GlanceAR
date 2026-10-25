@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Platform, Pressable, Text, View, useWindowDimensions } from 'react-native';
+import { AccessibilityInfo, Animated, Easing, Platform, Pressable, Text, View, useWindowDimensions } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Badge, Button, Empty, Field, Icon, Notice, Page, Portrait } from './components';
-import { colors, s } from './theme';
+import { colors, fonts, s } from './theme';
 import { useFaceDirectory, useGlance } from './state';
 import { DemoBanner, GlobalStatus, useOperation, useScreenFocused } from './screens';
 import FaceCamera, { type FaceFrame, type FaceOverlay } from './capture/FaceCamera';
@@ -10,7 +10,7 @@ import { cancelLiveCameraHandoff, prepareLiveCameraHandoff } from './capture/liv
 import { consistentSamples, faceDistance, matchDescriptor, MATCH_THRESHOLD, RecognitionTracker, scanProblem } from './face';
 import { talkingPoints } from './talkingPoints';
 import { DEMO_FACE_LIMIT, FACE_SCAN_SAMPLES, SIGHTING_REPORT_INTERVAL_MS } from './domain';
-import { RecognitionCountdown, type RecognitionCountdownView } from './recognitionCountdown';
+import { inFinalStretch, RecognitionCountdown, type RecognitionCountdownView } from './recognitionCountdown';
 import { RecognitionScope } from './recognitionScope';
 
 type ScanTarget = { profileId?: string; name: string; role: string };
@@ -21,11 +21,49 @@ const emptyCountdown: RecognitionCountdownView = {
 };
 const pageVisible = () => typeof document === 'undefined' || document.visibilityState === 'visible';
 
+/**
+ * Pulses the camera window green with "Initiating conversation" for the last
+ * RECOGNITION_FLASH_MS of the hold. Two pulses a second stays under photosensitivity
+ * limits; Reduce Motion gets a steady tint and steady text.
+ */
+function ConnectingFlash() {
+  const [pulse] = useState(() => new Animated.Value(1));
+  const [reduceMotion, setReduceMotion] = useState(false);
+  useEffect(() => {
+    let current = true;
+    AccessibilityInfo.isReduceMotionEnabled().then(value => { if (current) setReduceMotion(value); }).catch(() => {});
+    return () => { current = false; };
+  }, []);
+  useEffect(() => {
+    if (reduceMotion) return;
+    const useNativeDriver = Platform.OS !== 'web';
+    pulse.setValue(1);
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(pulse, { toValue: 0, duration: 380, easing: Easing.out(Easing.quad), useNativeDriver }),
+      Animated.timing(pulse, { toValue: 1, duration: 120, easing: Easing.in(Easing.quad), useNativeDriver }),
+    ]));
+    loop.start();
+    return () => loop.stop();
+  }, [reduceMotion, pulse]);
+  const fill = { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 } as const;
+  return <View pointerEvents="none" testID="connecting-flash" style={[fill, { alignItems: 'center', justifyContent: 'center', padding: 16 }]}>
+    <Animated.View testID="connecting-flash-tint" style={[fill, { backgroundColor: '#2BD687',
+      opacity: reduceMotion ? 0.25 : pulse.interpolate({ inputRange: [0, 1], outputRange: [0.12, 0.55] }) }]} />
+    <Animated.View accessibilityRole="text" accessibilityLiveRegion="assertive"
+      style={{ alignItems: 'center', gap: 4, paddingHorizontal: 18, paddingVertical: 12, borderRadius: 14,
+        backgroundColor: 'rgba(11,27,58,0.6)',
+        opacity: reduceMotion ? 1 : pulse.interpolate({ inputRange: [0, 1], outputRange: [0.45, 1] }) }}>
+      <Text style={{ color: '#FFFFFF', fontFamily: fonts.bold, fontSize: 17, lineHeight: 22, letterSpacing: 1.2, textAlign: 'center' }}>INITIATING CONVERSATION</Text>
+      <Text style={{ color: '#E8FFF3', fontFamily: fonts.medium, fontSize: 14, lineHeight: 19, textAlign: 'center' }}>Connection building…</Text>
+    </Animated.View>
+  </View>;
+}
+
 export function LiveCameraScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const app = useGlance(), { busy, perform } = useOperation();
   const focused = useScreenFocused();
-  const { height } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const { selectEvent } = app;
   useFocusEffect(useCallback(() => { selectEvent(id); }, [id, selectEvent]));
   const event = app.snapshot?.events.find(e => e.id === id);
@@ -277,6 +315,10 @@ export function LiveCameraScreen() {
   const cameraActive = focused && enabled && Platform.OS === 'web';
   const counting = countdownView.secondsRemaining !== null;
   const partnerName = firstName(people.get(countdownView.partnerId ?? '')?.name ?? 'your partner');
+  const flashing = app.mode === 'demo' && !demoPairPending && !active && inFinalStretch(countdownView);
+  // A 4:3 landscape window, as large as the column allows while the countdown card stays on screen.
+  const cameraWidth = Math.max(240, Math.min(Math.min(width, 520) - 48, (height - 410) * 4 / 3));
+  const cameraSize = { width: cameraWidth, height: cameraWidth * 3 / 4 };
   return <Page back title="LIVE Camera">
     <DemoBanner /><GlobalStatus />
     {!event ? !app.loading && <Empty icon="calendar" title="Event unavailable" text="Go back to your events, or join with an invitation code." />
@@ -287,7 +329,7 @@ export function LiveCameraScreen() {
       </View> : <>
         <View style={{ gap: 12 }}><Text style={s.title}>Who’s here?</Text>
           <Text style={s.muted}>{app.mode === 'demo'
-            ? 'Keep both registered faces in this camera for five seconds. If either leaves, the countdown restarts.'
+            ? 'Keep both registered faces in this camera for three seconds. If either leaves, the countdown restarts.'
             : 'Point your camera at the room. People with a face scan get a box with their name and something to talk about. Once you recognize each other, your conversation starts.'}</Text>
           {app.mode === 'demo' && <View testID="recognition-countdown"
             accessibilityLiveRegion="polite"
@@ -337,9 +379,11 @@ export function LiveCameraScreen() {
               }}>Resume existing conversation</Button>}
           </View>}
         </View>
-        <FaceCamera active={cameraActive} scopeId={`live:${id}:${app.mode}:${me?.id ?? 'unregistered'}`}
-          overlays={overlays} onFrame={onFrame} onCameraReset={resetCountdown}
-          style={{ height: Math.max(260, Math.min(440, height - 410)) }} />
+        <View style={[cameraSize, { alignSelf: 'center', borderRadius: 20, overflow: 'hidden' }]}>
+          <FaceCamera active={cameraActive} scopeId={`live:${id}:${app.mode}:${me?.id ?? 'unregistered'}`}
+            overlays={overlays} onFrame={onFrame} onCameraReset={resetCountdown} style={cameraSize} />
+          {flashing && <ConnectingFlash />}
+        </View>
         {scanView && <View style={[s.soft, s.between]}>
           <View style={[s.grow, { gap: 2 }]}><Text style={s.label}>{`Scanning ${scanView.name} · ${scanView.count}/${FACE_SCAN_SAMPLES}`}</Text>
             <Text style={s.small}>{scanView.hint}</Text></View>
@@ -359,7 +403,9 @@ export function LiveCameraScreen() {
             <Icon name={consented ? 'check-square' : 'square'} color={colors.blue} />
             <Text style={[s.small, s.grow]}>{app.mode === 'live'
               ? 'I agree that attendees of events where I turn Glance on can recognize my face scan with LIVE Camera. My portrait is never used. I can delete my scan at any time.'
-              : 'Everyone I scan has agreed. Scans stay in this tab’s memory, are never uploaded, and disappear on reload.'}</Text>
+              : app.demoSummaries
+                ? 'Everyone I scan has agreed, including to be recorded once a conversation starts. Scans stay in this tab’s memory; recordings go to Meta, through the local backend, only to make the summary, and are not kept.'
+                : 'Everyone I scan has agreed. Scans stay in this tab’s memory, are never uploaded, and disappear on reload.'}</Text>
           </Pressable>
           {members.map(person => {
             const mine = person.id === me?.id;

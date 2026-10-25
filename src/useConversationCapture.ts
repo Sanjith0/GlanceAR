@@ -8,6 +8,7 @@ import {
   renewAudioLease, startAudioCapture, stopAudioCapture, subscribeAudioStopped,
 } from './capture/audio';
 import { uploadAudio } from './capture/upload';
+import { BrowserRecorder } from './capture/browserAudio';
 import { CaptureController, initialCaptureView } from '../modules/glance-audio/src/CaptureController';
 
 /** Focus, not mounted back-stack presence, grants a hook permission to acknowledge consent. */
@@ -16,7 +17,7 @@ export function useConversationCapture(
   options: { enabled?: boolean } = {},
 ) {
   const enabled = options.enabled ?? true;
-  const { client, token, mode, demo, snapshot } = useGlance();
+  const { client, token, mode, demo, snapshot, demoSummaries, summarizeDemo } = useGlance();
   const [view, setView] = useState(initialCaptureView);
   const controller = useMemo(() => new CaptureController({
     audio: {
@@ -47,6 +48,29 @@ export function useConversationCapture(
     void controller.heartbeat();
     return () => { unsubscribe(); state.remove(); clearInterval(timer); };
   }, [controller, enabled]);
+  // Same-camera demo: a real browser recording for the summary, from conversation
+  // start until finish. Leaving, stopping or cancelling discards it unheard.
+  const recorder = useMemo(() => new BrowserRecorder(), []);
+  const [demoFocused, setDemoFocused] = useState(false);
+  const [demoAudio, setDemoAudio] = useState<{ id: string; error?: string } | null>(null);
+  useFocusEffect(useCallback(() => {
+    setDemoFocused(true);
+    return () => setDemoFocused(false);
+  }, []));
+  const recordId = enabled && mode === 'demo' && demoSummaries && demoFocused && conversation?.consentMode === 'event'
+    && conversation.status === 'recording' ? conversation.id : null;
+  useEffect(() => {
+    if (!recordId) return;
+    let current = true;
+    recorder.start(recordId).then(() => { if (current) setDemoAudio({ id: recordId }); }, (error: unknown) => {
+      if (!current) return;
+      setDemoAudio({ id: recordId, error: error instanceof Error && error.name === 'NotAllowedError'
+        ? 'Microphone permission is off, so this conversation will use the sample recap.'
+        : 'The microphone could not start, so this conversation will use the sample recap.' });
+    });
+    return () => { current = false; recorder.discard(recordId); };
+  }, [recordId, recorder]);
+  const demoAudioFor = demoAudio && demoAudio.id === conversation?.id ? demoAudio : null;
   const start = async () => {
     if (!enabled) return;
     if (mode === 'demo' && conversation) { demo({ type: 'start', id: conversation.id }); return; }
@@ -56,19 +80,32 @@ export function useConversationCapture(
     if (!enabled) return;
     if (mode === 'demo' && conversation) {
       if (conversation.consentMode === 'event' && (reason === 'gesture' || reason === 'finish_button')) {
-        demo({ type: 'finish', id: conversation.id, method: reason === 'gesture' ? 'gesture' : 'button' });
-      } else demo({ type: 'stop', id: conversation.id });
+        // Close the microphone before connecting, as the native recorder does.
+        const wav = await recorder.stop(conversation.id);
+        demo({ type: 'finish', id: conversation.id, method: reason === 'gesture' ? 'gesture' : 'button', awaitingSummary: Boolean(wav) });
+        if (wav) void summarizeDemo(conversation.id, wav);
+      } else {
+        recorder.discard(conversation.id);
+        demo({ type: 'stop', id: conversation.id });
+      }
       return;
     }
     await controller.stop(reason);
   };
   const cancel = async () => {
     if (!enabled) return;
-    if (mode === 'demo' && conversation) { demo({ type: 'cancel', id: conversation.id }); return; }
+    if (mode === 'demo' && conversation) {
+      recorder.discard(conversation.id);
+      demo({ type: 'cancel', id: conversation.id });
+      return;
+    }
     await controller.cancel();
   };
   return {
     ...view, available: enabled && isAudioCaptureAvailable(), start, stop, cancel,
+    /** Demo only: the browser microphone is recording this conversation for its summary. */
+    demoRecording: Boolean(demoAudioFor && !demoAudioFor.error && recordId),
+    demoAudioError: recordId ? demoAudioFor?.error : undefined,
     retryUpload: () => enabled ? controller.retryUpload() : Promise.resolve(),
     // Disabled/demo controllers have no scope and resolve immediately; an old
     // owned scope from a source/context change must still acknowledge its close.

@@ -39,7 +39,10 @@ export type DemoAction =
   | { type: 'join'; eventId: string }
   | { type: 'eventPermission'; eventId: string; enabled: boolean }
   | { type: 'pair'; conversation: Conversation }
-  | { type: 'finish'; id: string; method: 'gesture' | 'button' }
+  /** awaitingSummary: a real recording is being summarized; open chat with the recap pending. */
+  | { type: 'finish'; id: string; method: 'gesture' | 'button'; awaitingSummary?: boolean }
+  | { type: 'recap'; id: string; recap: Recap }
+  | { type: 'recapFailed'; id: string; error: string }
   | { type: 'message'; id: string; message: ChatMessage }
   /** A preview attendee for someone physically present; joins with Glance enabled. */
   | { type: 'addPerson'; eventId: string; profile: Profile }
@@ -93,14 +96,19 @@ export function demoReducer(state: DemoState, action: DemoAction): DemoState {
         && existing.participants.some(p => c.participants.some(next => next.id === p.id))))) return state;
     return { ...state, conversations: [c, ...state.conversations] };
   }
+  // Summaries arrive asynchronously, whichever actor is shown; only a pending summary is filled.
+  if (action.type === 'recap' || action.type === 'recapFailed') return { ...state, conversations: state.conversations.map(c =>
+    c.id !== action.id || c.status !== 'processing' ? c : action.type === 'recap'
+      ? { ...c, status: 'shared', recap: action.recap, error: undefined } : { ...c, status: 'failed', error: action.error }) };
   if (action.type === 'delete') return { ...state, conversations: state.conversations.filter(c => c.id !== action.id || !c.participants.some(p => p.id === state.actor)) };
   return { ...state, conversations: state.conversations.map(c => {
     if (c.id !== action.id || !c.participants.some(p => p.id === state.actor)) return c;
     if (action.type === 'finish' && c.consentMode === 'event' && c.status === 'recording') {
       if (!c.participants.every(p => state.eventPermissions[c.eventId]?.includes(p.id))) return c;
       const now = Date.now();
-      return { ...c, endedAt: now, connectedAt: now, finishMethod: action.method,
-        exchangeConsent: c.participants.map(p => p.id), status: 'shared', recap: sampleRecap, messages: [] };
+      const connected = { ...c, endedAt: now, connectedAt: now, finishMethod: action.method,
+        exchangeConsent: c.participants.map(p => p.id), messages: [] };
+      return action.awaitingSummary ? { ...connected, status: 'processing' } : { ...connected, status: 'shared', recap: sampleRecap };
     }
     if (action.type === 'message' && (c.connectedAt || c.status === 'shared') && c.status !== 'cancelled') {
       const text = action.message.text.trim();

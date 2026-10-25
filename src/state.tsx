@@ -4,6 +4,9 @@ import { FACE_MODEL, FACE_SCAN_POLICY_VERSION } from './domain';
 import { createGlanceClient } from './data/convexClient';
 import { createDemoEncounter, demoFaceDirectory, demoReducer, demoSnapshot, initialDemo, type DemoAction } from './demo';
 import { getDeviceToken } from './session';
+import { demoSummaryURL, summarizeDemoAudio } from './data/demoSummaryClient';
+import { browserAudioSupported } from './capture/browserAudio';
+import { ConvexError } from 'convex/values';
 import { isAudioCaptureAvailable, requestAudioPermission } from './capture/audio';
 import { requestGestureCameraPermission } from './capture/GestureCapture';
 
@@ -42,6 +45,10 @@ interface GlanceState {
   addDemoPerson: (eventId: string, name: string, role: string, photoUrl: string) => string;
   reportSighting: (eventId: string, personId: string) => Promise<SightingResult>;
   demoFaceDirectory: (eventId: string) => FaceDirectory;
+  /** Real same-camera demo summaries: a local summary backend is configured and this browser can record. */
+  demoSummaries: boolean;
+  /** Uploads one finished demo recording and fills in its pending recap (or the failure). */
+  summarizeDemo: (conversationId: string, wav: Blob) => Promise<void>;
 }
 const Context = createContext<GlanceState | null>(null);
 export function GlanceProvider({ children }: { children: React.ReactNode }) {
@@ -192,12 +199,22 @@ export function GlanceProvider({ children }: { children: React.ReactNode }) {
     return id;
   };
   // A local sighting is never a simulated second device's acknowledgment.
-  // LIVE Camera demo pairing has its own fresh-frame five-second co-visibility
+  // LIVE Camera demo pairing has its own fresh-frame three-second co-visibility
   // gate. Authenticated reciprocal sightings remain a live-backend operation.
   const reportSighting = async (eventId: string, personId: string): Promise<SightingResult> => {
     if (mode === 'live') return client!.reportSighting(token, eventId, personId, captureSource);
     return { status: 'waiting' };
   };
+  const demoSummaries = Boolean(demoSummaryURL) && browserAudioSupported();
+  const summarizeDemo = useCallback(async (conversationId: string, wav: Blob) => {
+    try {
+      dispatch({ type: 'recap', id: conversationId, recap: await summarizeDemoAudio(wav) });
+    } catch (e) {
+      const error = e instanceof ConvexError ? String(e.data)
+        : 'The summary service could not be reached. Is the local backend running?';
+      dispatch({ type: 'recapFailed', id: conversationId, error });
+    }
+  }, []);
   const snapshot = mode === 'demo' ? demoSnapshot(sample, selectedEvent) : liveSnapshot;
   const captureChoiceLocked = pairing || Boolean(snapshot?.activeRecorderConversationId);
   const setCaptureSource = (source: 'phone' | 'glasses') => {
@@ -212,6 +229,7 @@ export function GlanceProvider({ children }: { children: React.ReactNode }) {
     captureSource, setCaptureSource, phoneCaptureReady, preparePhoneCapture, captureChoiceLocked,
     saveFaceScan, deleteFaceScan, addDemoPerson, reportSighting,
     demoFaceDirectory: eventId => demoFaceDirectory(sample, eventId),
+    demoSummaries, summarizeDemo,
   }}>{children}</Context.Provider>;
 }
 export function useGlance(): GlanceState {

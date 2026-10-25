@@ -1,6 +1,6 @@
 import {
   queryGeneric, mutationGeneric, internalQueryGeneric, internalMutationGeneric,
-  internalActionGeneric,
+  actionGeneric, internalActionGeneric,
   type DataModelFromSchemaDefinition, type DocumentByName,
   type QueryBuilder, type MutationBuilder, type ActionBuilder,
   type GenericQueryCtx, type GenericMutationCtx,
@@ -18,3 +18,4 @@ export const mutation: MutationBuilder<DataModel, "public"> = mutationGeneric;
 export const internalQuery: QueryBuilder<DataModel, "internal"> = internalQueryGeneric;
 export const internalMutation: MutationBuilder<DataModel, "internal"> = internalMutationGeneric;
 export const internalAction: ActionBuilder<DataModel, "internal"> = internalActionGeneric;
+export const action: ActionBuilder<DataModel, "public"> = actionGeneric;

@@ -61,7 +61,7 @@ npm ci
 EXPO_NO_DOTENV=1 EXPO_PUBLIC_CONVEX_URL= npm run web -- --clear
 ```
 
-Choose **Enter event** and allow camera access. The fictional attendees already have sample event permissions, so an encounter begins automatically. Keep exactly two hands in the live window, one from each person, with thumb/pointer/middle up and the other fingers folded. Hold for about a second: both hands highlight, the screen turns green once, and the shared sample chat opens. **Finish & connect** is the fallback if a camera is unavailable; there is no simulated-gesture button.
+Choose **Enter event**. Nothing starts on its own: open **LIVE Camera** and hold two registered faces in view for the 3-2-1, or choose **Simulate next encounter**. Allow camera access when asked. Keep exactly two hands in the live window, one from each person, with thumb/pointer/middle up and the other fingers folded. Hold for about a second: both hands highlight, the screen turns green once, and the shared sample chat opens. **Finish & connect** is the fallback if a camera is unavailable; there is no simulated-gesture button.
 
 Send a message and use the Alex/Sam preview controls to see the other perspective. Return to the event for **Simulate next encounter**; only encounter creation is simulated, and each encounter has a separate chat. The native iPhone app needs a rebuilt development client for its updated hand detector and overlays.
 
@@ -75,7 +75,7 @@ From an enabled event, choose **LIVE Camera**. In the preview:
 
 1. Tick the consent box, then **Scan my face** and **Scan face** for one consenting attendee. You can also **Add a person**, up to five total. Scan one person at a time; three consistent samples are taken.
 2. Bring yourself and exactly one other registered, enabled attendee into the same camera view. The other person gets a green box, their name and talking points; your own scan shows as **You**. An unregistered face does not count.
-3. Keep both faces recognized for the visible **5, 4, 3, 2, 1** countdown. Losing either face, changing the pair, adding an extra face, stopping the camera, or changing a scan resets the hold. Only a fresh frame sampled after the full five seconds can start the conversation; a timer or frozen video cannot.
+3. Keep both faces recognized for the visible **3, 2, 1** countdown. For the final 2.5 seconds the camera window pulses green with **Initiating conversation · Connection building**. Losing either face, changing the pair, adding an extra face, stopping the camera, or changing a scan resets the hold. Only a fresh frame sampled after the full three seconds can start the conversation; a timer or frozen video cannot.
 4. The conversation screen inherits the existing video stream and uses real two-hand gesture detection to finish. An already-open demo conversation has an explicit **Resume existing conversation** action instead of silently bypassing the hold. Audio and the recap remain samples in preview mode.
 
 This is a same-camera laptop demo, not a simulated acknowledgment from another device. The live backend's authenticated reciprocal-sighting flow is separate and unchanged.
@@ -83,11 +83,36 @@ This is a same-camera laptop demo, not a simulated acknowledgment from another d
 How it works:
 
 - **On-device model:** [face-api](https://github.com/vladmandic/face-api) (MIT) runs TensorFlow.js in the browser: a tiny face detector, 68-point landmarks and a 128-number ResNet descriptor. `scripts/copy-face-models.mjs` copies the ~7 MB of weights into `public/models/face-api` on install and before `web`/`build:web`; they are not committed. The library and models load only when LIVE Camera opens.
-- **Matching:** the closest scan within a 0.5 distance wins, but only if it beats the runner-up by 0.06. Live sighting reports require repeated matches over 0.6 seconds; demo pairing requires the same two people throughout its five-second hold. A scan that already matches another attendee is refused.
+- **Matching:** the closest scan within a 0.5 distance wins, but only if it beats the runner-up by 0.06. Live sighting reports require repeated matches over 0.6 seconds; demo pairing requires the same two people throughout its three-second hold. A scan that already matches another attendee is refused.
 - **Demo freshness:** detection is serial and ignores repeated video timestamps. The hold uses a monotonic clock, rejects delayed/replayed samples and resets after a 1,200 ms evidence gap. Backgrounding, camera errors, scan changes and context changes invalidate pending attempts; the countdown display can expire progress but cannot create a conversation.
 - **Synced database (live backend):** `faceDirectory` is a reactive Convex query, so every open LIVE Camera updates the moment an attendee joins, enables, pauses, rescans or deletes. It returns only members who have Glance enabled and a face scan, and only to viewers who enabled Glance themselves.
 - **Mutual pairing:** each phone calls `reportSighting` about once a second while it steadily recognizes someone. When both directions arrive within `SIGHTING_WINDOW_MS`, one event-mode conversation is created; Convex serializes the race, so both phones open the same conversation. Fresh sightings are needed for every new encounter.
 - **Platform limits:** recognition runs in browsers (desktop, and phone browsers over HTTPS or localhost). The iPhone app shows a placeholder until the same model is ported natively; templates from a different model would never match. Browser participants still cannot record audio, so a real two-person live conversation needs the native recorder.
+
+## Conversation summaries in the preview
+
+The same-camera preview can record the real conversation and return a Granola-style summary: summary, topics and next steps in the shared chat, with a **Show transcript** button that separates **Speaker 1** from **Speaker 2**. It needs a local backend and your Meta key; without them the preview keeps its labelled sample recap.
+
+```sh
+# Terminal A: local backend (keep it running)
+CONVEX_AGENT_MODE=anonymous npx convex dev
+
+# Terminal B, once: enable demo summaries and add your key (server-side only)
+npx convex env set GLANCE_DEMO_SUMMARIES enabled
+npx convex env set META_API_KEY   # paste the key when prompted; never in an EXPO_PUBLIC_* variable
+
+# Terminal B: the preview, pointed at that backend
+EXPO_NO_DOTENV=1 EXPO_PUBLIC_CONVEX_URL= EXPO_PUBLIC_DEMO_SUMMARY_URL=http://127.0.0.1:3210 npm run web
+```
+
+- **When it records:** from the moment the conversation opens (after the 3-2-1 hold) until **Finish & connect** or the gesture. A red indicator shows while the browser microphone is on. **Stop without sharing**, cancelling or leaving deletes the audio without sending it. Recordings stop at 10 minutes.
+- **What happens on finish:** the browser encodes 16 kHz mono WAV and uploads it to the local backend; `demoSummary.summarize` sends it to Meta's speech-to-text in `DIARIZATION` mode, then Meta's text model writes the summary from the "Speaker 1: … / Speaker 2: …" transcript. The upload is deleted whatever the outcome, and the result lives only in the tab.
+- **Speaker labels are anonymous:** Meta's A/B labels are numbered by first appearance. They are not matched to the faces or names on screen.
+- **Local only:** `demoAudio.generateUploadUrl` and `demoSummary.summarize` are unauthenticated and spend Meta credit, so they refuse to run unless the deployment sets `GLANCE_DEMO_SUMMARIES=enabled`. Never set it on a shared or public deployment. They also refuse any file attached to a real conversation.
+- **Testing without a key:** set `META_API_BASE_URL` on the deployment to a local mock of the two Meta endpoints. Unset it before using a real key.
+- **Restart after changing variables:** the local backend's Node action runner was seen keeping removed values until `npx convex dev` restarted. After setting or removing `META_API_KEY` or `META_API_BASE_URL`, stop and rerun it.
+- **Failure messages are specific:** a rejected key, rate limit, refused recording or unreachable Meta each get their own message, and the backend logs only a code such as `ASR_HTTP_401`, never the provider's response or your key.
+- **Live mode** uses the same shared Meta code (`convex/meta.ts`): its recap is now written from the speaker-labelled transcript, but live chats still show the recap only, not the transcript.
 
 ## Live hand-gesture finish
 

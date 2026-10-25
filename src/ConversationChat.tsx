@@ -7,6 +7,10 @@ import { Button, Icon, Notice, Portrait } from './components';
 import type { Conversation, Profile } from './domain';
 import { colors, fonts, s } from './theme';
 
+/** Speaker 1 blue, Speaker 2 green, alternating after that. */
+const speakerColors = [colors.green, colors.blue];
+const timestamp = (ms: number) => `${Math.floor(ms / 60_000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
+
 export interface ConversationChatProps {
   conversation: Conversation;
   me: Profile;
@@ -46,6 +50,7 @@ function ChatContent({
   const [operation, setOperation] = useState<'send' | 'delete' | null>(null);
   const [operationError, setOperationError] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [showTranscript, setShowTranscript] = useState(false);
   const working = useRef(false);
   const mounted = useRef(true);
   const atBottom = useRef(true);
@@ -168,6 +173,18 @@ function ChatContent({
                 <Text style={[s.muted, styles.flexText]}>{step}</Text>
               </View>)}
             </View>}
+            {recap.transcript && recap.transcript.length > 0 && <>
+              <Button tone="ghost" icon={showTranscript ? 'chevron-up' : 'align-left'} testID="chat-transcript-toggle"
+                onPress={() => setShowTranscript(!showTranscript)}>{showTranscript ? 'Hide transcript' : 'Show transcript'}</Button>
+              {showTranscript && <View style={styles.transcript} testID="chat-transcript">
+                {recap.transcript.map((turn, index) => <View key={`${index}-${turn.startMs}`} style={styles.turn}>
+                  <Text style={[styles.speaker, { color: speakerColors[(Number(turn.speaker.replace(/\D/g, '')) || 1) % 2] }]}>
+                    {`${turn.speaker} · ${timestamp(turn.startMs)}`}</Text>
+                  <Text style={s.muted}>{turn.text}</Text>
+                </View>)}
+                <Text style={s.small}>Speaker numbers come from the recording’s voices, not from who you are.</Text>
+              </View>}
+            </>}
             <Text style={s.small}>{demo && recap.source === 'sample'
               ? 'This is a scripted example, not a transcription.'
               : 'The same recap is shared with both of you. AI can miss details; check anything important together.'}</Text>
@@ -256,6 +273,9 @@ const styles = StyleSheet.create({
   topic: { maxWidth: '100%', paddingHorizontal: 10, paddingVertical: 6, backgroundColor: colors.paper, borderRadius: 8 },
   nextSteps: { gap: 10 },
   nextStep: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  transcript: { gap: 12, paddingTop: 4 },
+  turn: { gap: 2 },
+  speaker: { fontFamily: fonts.semibold, fontSize: 12, lineHeight: 17, letterSpacing: 0.3 },
   emptyMessages: { color: colors.muted, fontFamily: fonts.body, fontSize: 13, lineHeight: 20, textAlign: 'center', paddingVertical: 12 },
   messageRow: { flexDirection: 'row', justifyContent: 'flex-start' },
   myMessageRow: { justifyContent: 'flex-end' },

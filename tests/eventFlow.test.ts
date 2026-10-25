@@ -10,7 +10,7 @@ function finish(state: DemoState, id = 'first') {
 }
 
 describe('event-mode preview, distinct from legacy per-conversation consent', () => {
-  it('starts a simulated encounter automatically with the two fictional event grants', () => {
+  it('a paired encounter starts recording without a Start button, under the two fictional event grants', () => {
     const state = encounter();
     const c = state.conversations[0];
     expect(c).toMatchObject({ status: 'recording', consentMode: 'event', captureSource: 'phone', startedAt: 1000 });

@@ -53,10 +53,10 @@ export function GlobalStatus() {
   </>;
 }
 export function DemoBanner({ actors = false }: { actors?: boolean }) {
-  const { mode, snapshot, switchActor } = useGlance();
+  const { mode, snapshot, switchActor, demoSummaries } = useGlance();
   if (mode !== 'demo') return null;
   return <View style={{ gap: 10 }}>
-    <View style={[s.row, { flexWrap: 'wrap' }]}><Badge>INTERACTIVE PREVIEW</Badge><Text style={s.small}>No audio recorded</Text></View>
+    <View style={[s.row, { flexWrap: 'wrap' }]}><Badge>INTERACTIVE PREVIEW</Badge><Text style={s.small}>{demoSummaries ? 'Records conversations for real summaries' : 'No audio recorded'}</Text></View>
     {actors && <View style={{ backgroundColor: colors.canvas, borderRadius: 14, padding: 12, gap: 9 }}>
       <Text style={s.small}>Preview the same chat from either person’s side.</Text>
       <View style={s.row}>{samplePeople.map(p => <Pressable key={p.id} accessibilityRole="button"
@@ -172,7 +172,6 @@ export function EventScreen() {
   const members = useMemo(() => selected ? eventMembers?.filter(p => p.id !== meId) ?? [] : [], [selected, eventMembers, meId]);
   const enabled = selected && Boolean(app.snapshot?.eventPermission?.enabled);
   const active = app.snapshot?.conversations.find(c => c.eventId === id && c.consentMode === 'event' && ['consent', 'recording'].includes(c.status));
-  const history = app.snapshot?.conversations.filter(c => c.eventId === id) ?? [];
   const source = active && active.recorderId === meId ? active.captureSource ?? 'phone' : app.captureSource;
   const nativePhone = app.mode === 'live' && Platform.OS !== 'web' && source === 'phone';
   const captureReady = !nativePhone || app.phoneCaptureReady;
@@ -208,12 +207,8 @@ export function EventScreen() {
       router.push(`/conversation/${active.id}`);
       return;
     }
-    if (active) return;
-    const peer = members.find(person => person.glanceEnabled);
-    if (app.mode !== 'demo' || history.length || !peer) return;
-    const timer = setTimeout(() => { void perform(() => pair(peer.id)); }, 1400);
-    return () => clearTimeout(timer);
-  }, [focused, enabled, captureReady, active, app.mode, history.length, members, perform, pair]);
+    // Encounters start only from LIVE Camera (or an explicit pair button), never on entry.
+  }, [focused, enabled, captureReady, active]);
   const enable = async () => {
     const generation = entryGeneration.current;
     if (nativePhone) await app.preparePhoneCapture();
@@ -229,7 +224,9 @@ export function EventScreen() {
         <View style={s.between}><Text style={s.heading}>{enabled ? 'Glance is on.' : 'Be present. We’ll keep the details.'}</Text><Icon name={enabled ? 'radio' : 'mic'} color={colors.blue} /></View>
         <Text style={s.muted}>{enabled ? 'Ready for your next conversation. No Start button, and no extra confirmation at the end.' : 'Enable Glance once for this event, then let the conversations happen.'}</Text>
         <Text style={s.small}>Enabling Glance permits recording your paired conversations with other enabled attendees. Either participant’s finish gesture or Finish &amp; connect button creates the connection and shares both portraits, a chat, and the same recap. Audio is sent to Meta’s model API to prepare the recap. You can pause Glance or stop without sharing at any time.</Text>
-        {app.mode === 'demo' && <Text style={[s.small, { color: colors.blue }]}>Encounters and recaps here are samples, with no microphone active. LIVE Camera and hand-gesture detection use your real camera, on this device only.</Text>}
+        {app.mode === 'demo' && <Text style={[s.small, { color: colors.blue }]}>{app.demoSummaries
+          ? 'Sample attendees, real devices: LIVE Camera and hand gestures use your camera on this device, and each conversation records your microphone until you finish. Finishing sends that audio to Meta, through your local backend, for a speaker-separated summary; nothing is stored.'
+          : 'Encounters and recaps here are samples, with no microphone active. LIVE Camera and hand-gesture detection use your real camera, on this device only.'}</Text>}
         {enabled && <Button icon="camera" onPress={() => router.push(`/live/${id}`)}>LIVE Camera</Button>}
         {enabled
           ? <Button tone="secondary" icon="pause" busy={busy} onPress={() => void perform(() => app.setEventPermission(id, false))}>Pause Glance for this event</Button>
@@ -247,7 +244,7 @@ export function EventScreen() {
       <View style={[s.soft, s.between]}><View style={{ gap: 4 }}><Text style={s.small}>INVITE A FRIEND</Text><Text selectable style={[s.heading, { letterSpacing: 2 }]}>{event.inviteCode}</Text></View><Icon name="key" color={colors.blue} /></View>
       <View style={s.divider} />
       <Text style={s.heading}>People in the room</Text>
-      <Text style={s.muted}>{app.mode === 'demo' ? 'The preview pairs the sample profiles for you. Come back here to try another encounter, or open LIVE Camera to recognize people you scan.' : 'Open LIVE Camera to recognize attendees who added a face scan. Selecting a profile below remains the fallback.'}</Text>
+      <Text style={s.muted}>{app.mode === 'demo' ? 'Nothing starts on its own. Open LIVE Camera and hold two registered faces in view for the 3-2-1, or use Simulate next encounter below.' : 'Open LIVE Camera to recognize attendees who added a face scan. Selecting a profile below remains the fallback.'}</Text>
       {members.map(person => <View key={person.id} style={s.card}><PersonRow person={person} label={person.glanceEnabled ? 'Glance enabled for this event' : 'Glance is paused'} />
         <Button busy={busy} disabled={!enabled || !person.glanceEnabled || !captureReady || (app.mode === 'live' && Platform.OS === 'web')}
           tone="secondary" icon="message-circle" onPress={() => void perform(() => pair(person.id))}>{app.mode === 'demo' ? 'Simulate next encounter' : `Pair with ${person.name.split(' ')[0]}`}</Button>
@@ -290,7 +287,7 @@ export function ProfileScreen() {
       <View style={[s.grow, { gap: 5 }]}><Text style={s.label}>{item.title}</Text><Text style={s.small}>{item.text}</Text></View></View>)}
     <View style={s.divider} />
     <View style={{ gap: 9 }}><Text style={s.label}>Build status</Text>
-      <Text style={s.small}>Browser hand detection uses your real camera, but microphone capture still needs the iPhone development build, not Expo Go. The separate Meta DAT harness and updated iPhone gesture overlays still need physical-device testing.</Text>
+      <Text style={s.small}>Browser hand detection uses your real camera. {app.demoSummaries ? 'The preview also records conversations through your browser microphone for summaries via your local backend; live' : 'Live'} microphone capture still needs the iPhone development build, not Expo Go. The separate Meta DAT harness and updated iPhone gesture overlays still need physical-device testing.</Text>
       <Button tone="ghost" onPress={() => app.setMode(app.mode === 'demo' ? 'live' : 'demo')}>
         {app.mode === 'demo' ? 'Switch to configured backend' : 'Explore sample walkthrough'}
       </Button>
@@ -560,12 +557,18 @@ export function ConversationScreen() {
     </>}
     {(conversation.status === 'recording' || confirming || finishing) && <>
       <View style={s.between}>
-        <View style={{ gap: 6 }}><Badge green={confirming}>{confirming ? 'CONNECTION SAVED' : app.mode === 'demo' ? 'SAMPLE ENCOUNTER'
+        <View style={{ gap: 6 }}><Badge green={confirming}>{confirming ? 'CONNECTION SAVED' : app.mode === 'demo' ? capture.demoRecording ? 'RECORDING AUDIO' : 'SAMPLE ENCOUNTER'
           : capture.capturing ? 'MICROPHONE RECORDING' : finishing ? 'FINISHING SAFELY' : 'PAIRED DEVICE'}</Badge>
           <Text style={{ fontFamily: fonts.medium, fontSize: 28, letterSpacing: -1, color: colors.ink, fontVariant: ['tabular-nums'] }}>{timer}</Text></View>
         <View style={[s.row, { gap: 7 }]}><Portrait person={me} size={36} /><Icon name="link" color={colors.muted} size={14} /><Portrait person={other} size={36} /></View>
       </View>
     </>}
+    {capture.demoRecording && conversation.status === 'recording' && <View testID="demo-recording" accessibilityLiveRegion="polite"
+      style={[s.row, { padding: 12, borderRadius: 12, backgroundColor: colors.dangerLight }]}>
+      <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: colors.danger }} />
+      <Text style={[s.small, s.grow, { color: colors.danger }]}>Recording this conversation for your summary. Finishing sends it; Stop without sharing deletes it.</Text>
+    </View>}
+    {capture.demoAudioError ? <Notice>{capture.demoAudioError}</Notice> : null}
     {showCamera && <View style={{ gap: 12 }}>
       <View style={s.between}><Text style={s.heading}>Three fingers.{'\n'}You’re connected.</Text>
         <Text style={{ color: colors.blue, fontSize: 42, fontFamily: fonts.bold }}>3</Text></View>
@@ -582,7 +585,8 @@ export function ConversationScreen() {
       {Platform.OS !== 'web' && cameraStatus ? <Text style={s.small}>{cameraStatus}</Text> : null}
     </View>}
     {conversation.status === 'recording' && <Text style={s.small}>{app.mode === 'demo'
-      ? 'The camera and hand detection are real. This walkthrough records no audio and opens a clearly labeled sample recap.'
+      ? capture.demoRecording ? 'The camera, hand detection and microphone are real. Your summary separates Speaker 1 from Speaker 2; the audio is deleted once it is summarized.'
+        : 'The camera and hand detection are real. This walkthrough records no audio and opens a clearly labeled sample recap.'
       : harness ? 'Live video and gesture capture stay in your separate glasses harness. Finish there, then return here for your shared chat.'
         : 'The live video is not saved. Either participant can use Finish & connect under your event permissions; the camera detects two hands, not who owns them.'}</Text>}
     {!connected && !finishing && ['ended', 'failed'].includes(conversation.status) && <>

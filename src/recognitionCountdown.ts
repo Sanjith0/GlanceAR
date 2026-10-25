@@ -1,10 +1,12 @@
 /** Timing and opaque matched IDs only; no face data, matching or side effects. */
-export const RECOGNITION_HOLD_MS = 5_000;
+export const RECOGNITION_HOLD_MS = 3_000;
+/** The final stretch of the hold that flashes the camera and "Initiating conversation". */
+export const RECOGNITION_FLASH_MS = 2_500;
 export const RECOGNITION_MAX_GAP_MS = 1_200;
 
 export type RecognitionCountdownView = {
   partnerId: string | null;
-  secondsRemaining: 5 | 4 | 3 | 2 | 1 | null;
+  secondsRemaining: 3 | 2 | 1 | null;
   progress: number;
   /** A one-shot event returned by observe only, never by view. */
   completed: boolean;
@@ -13,7 +15,7 @@ type MatchedId = string | null | undefined;
 const validId = (id: MatchedId): id is string => typeof id === 'string' && id.trim().length > 0;
 
 /**
- * Require the same exactly-two matched participants, including self, for 5 seconds.
+ * Require the same exactly-two matched participants, including self, for 3 seconds.
  * Pass every detection, retaining null for unmatched faces; never filter the array.
  * All timestamps use one monotonic clock. The adapter must also suppress repeated
  * video frames; timestamps alone cannot prove that the underlying image is new.
@@ -58,7 +60,7 @@ export class RecognitionCountdown {
       partnerId: this.partnerId,
       // A timer may reach the deadline, but only a fresh frame may finish.
       secondsRemaining: this.fired ? null
-        : Math.max(1, Math.ceil((RECOGNITION_HOLD_MS - elapsed) / 1_000)) as 5 | 4 | 3 | 2 | 1,
+        : Math.max(1, Math.ceil((RECOGNITION_HOLD_MS - elapsed) / 1_000)) as 3 | 2 | 1,
       progress: Math.min(1, elapsed / RECOGNITION_HOLD_MS),
       completed,
     };
@@ -110,4 +112,9 @@ export class RecognitionCountdown {
     }
     return this.snapshot(now);
   }
+}
+
+/** True during the last RECOGNITION_FLASH_MS of an active (not yet completed) hold. */
+export function inFinalStretch(view: RecognitionCountdownView): boolean {
+  return view.secondsRemaining !== null && (1 - view.progress) * RECOGNITION_HOLD_MS <= RECOGNITION_FLASH_MS;
 }
