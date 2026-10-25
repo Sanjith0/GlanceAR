@@ -63,6 +63,16 @@ The October 25 gesture revision passed 218 behavioral tests and 22 native/glasse
 - **Errors:** No uncaught page errors or unexpected failed network requests occurred. MediaPipe emitted the upstream informational CPU-delegate message through `console.error`; production inference still succeeded without a blocking overlay.
 - **Limits:** No native build, real two-person lighting/accuracy test, live backend deployment, microphone recording, transcription, or real shared recap was validated in this browser run. Two matching hands do not prove two independent people.
 
+## Live gesture hosted verification
+
+A fresh browser context loaded the updated private Glance deployment and its current camera guidance. The host's opaque sandbox origin blocks camera access, so this hosted check validates the fallback experience, not live gesture inference.
+
+- **No hidden permission attempt:** The screen explains that camera testing needs localhost or a standalone HTTPS deployment. The camera API was not called, and no success state appeared before a deliberate finish.
+- **Manual fallback:** Finish & connect displayed the green acknowledgment and opened the labeled sample recap/chat on the same route.
+- **Messaging:** Blank drafts stayed disabled; a padded message was trimmed and cleared after sending. Both participant perspectives could send and see their actual messages.
+- **Hosted assets/layout:** All five fonts loaded, the nested document pathname remained intact, and the 320px chat had no horizontal overflow. The fresh hosted run produced no page, network, or console errors.
+- **Deployment boundary:** The private preview still cannot demonstrate camera recognition itself. No public deployment was made, and no hosting security restriction was bypassed.
+
 ## Previous browser verification
 
 The October 24 revision passed the local inventory and a fresh-context walkthrough of the actual private deployment. The hosted checks covered automatic encounter, direct gesture-to-chat, both message perspectives, deletion, separate encounters, ordinary Stop, event permission cycling, profile editing, event creation and safe hash deep links; all five font faces loaded without page or network errors.
