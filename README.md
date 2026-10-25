@@ -88,7 +88,7 @@ How it works:
 - **Demo freshness:** detection is serial and ignores repeated video timestamps. The hold uses a monotonic clock, rejects delayed/replayed samples and resets after a 1,200 ms evidence gap. Backgrounding, camera errors, scan changes and context changes invalidate pending attempts; the countdown display can expire progress but cannot create a conversation.
 - **Synced database (live backend):** `faceDirectory` is a reactive Convex query, so every open LIVE Camera updates the moment an attendee joins, enables, pauses, rescans or deletes. It returns only members who have Glance enabled and a face scan, and only to viewers who enabled Glance themselves.
 - **Mutual pairing:** each phone calls `reportSighting` about once a second while it steadily recognizes someone. When both directions arrive within `SIGHTING_WINDOW_MS`, one event-mode conversation is created; Convex serializes the race, so both phones open the same conversation. Fresh sightings are needed for every new encounter.
-- **Platform limits:** recognition runs in browsers (desktop, and phone browsers over HTTPS or localhost). The iPhone app shows a placeholder until the same model is ported natively; templates from a different model would never match. Browser participants still cannot record audio, so a real two-person live conversation needs the native recorder.
+- **Platform limits:** recognition runs in browsers (desktop, and phone browsers over HTTPS or localhost). The iPhone app shows a placeholder until the same model is ported natively; templates from a different model would never match. In live mode, browsers record too: the conversation's recording device (whoever's phone reported first) uses its own microphone in Safari or Chrome over HTTPS, holds the same server lease as the native recorder, and uploads one 16 kHz WAV when the conversation finishes. LIVE Camera runs the same three-second hold, countdown and green flash as the demo before reporting a sighting.
 
 ## Conversation summaries in the preview
 
@@ -113,7 +113,7 @@ EXPO_NO_DOTENV=1 EXPO_PUBLIC_CONVEX_URL= EXPO_PUBLIC_DEMO_SUMMARY_URL=http://127
 - **Testing without a key:** set `META_API_BASE_URL` on the deployment to a local mock of the two Meta endpoints. Unset it before using a real key.
 - **Restart after changing variables:** the local backend's Node action runner was seen keeping removed values until `npx convex dev` restarted. After setting or removing `META_API_KEY` or `META_API_BASE_URL`, stop and rerun it.
 - **Failure messages are specific:** a rejected key, rate limit, refused recording or unreachable Meta each get their own message, and the backend logs only a code such as `ASR_HTTP_401`, never the provider's response or your key.
-- **Live mode** uses the same shared Meta code (`convex/meta.ts`): its recap is now written from the speaker-labelled transcript, but live chats still show the recap only, not the transcript.
+- **Live mode** uses the same shared Meta code (`convex/meta.ts`): its recap is written from the speaker-labelled transcript, and live chats show the same anonymous transcript behind Show transcript.
 
 ## Live hand-gesture finish
 

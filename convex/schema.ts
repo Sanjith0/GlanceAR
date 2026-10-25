@@ -6,6 +6,10 @@ export const recapValidator = v.object({
   topics: v.array(v.string()),
   nextSteps: v.array(v.string()),
   source: v.literal("ai"),
+  /** Anonymous diarized turns ("Speaker 1"…), shown behind a button in chat. */
+  transcript: v.optional(v.array(v.object({
+    speaker: v.string(), startMs: v.number(), endMs: v.number(), text: v.string(),
+  }))),
 });
 
 export default defineSchema({

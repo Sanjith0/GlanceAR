@@ -21,7 +21,7 @@ export interface Recap {
   topics: string[];
   nextSteps: string[];
   source: "ai" | "sample";
-  /** Demo summaries only: anonymous diarized turns, shown behind a button. */
+  /** Anonymous diarized turns, shown behind a button. */
   transcript?: SpeakerTurn[];
 }
 

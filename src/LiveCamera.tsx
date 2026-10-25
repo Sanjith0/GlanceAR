@@ -14,6 +14,7 @@ import { inFinalStretch, RecognitionCountdown, type RecognitionCountdownView } f
 import { RecognitionScope } from './recognitionScope';
 
 const firstName = (name: string) => name.split(' ')[0];
+const LIVE_HOLD_LOST_MS = 4_000;
 const emptyCountdown: RecognitionCountdownView = {
   partnerId: null, secondsRemaining: null, progress: 0, completed: false,
 };
@@ -91,6 +92,10 @@ export function LiveCameraScreen() {
   const [scopeGeneration, setScopeGeneration] = useState(0);
   const [demoPairPending, setDemoPairPending] = useState(false);
   const [authorizedConversation, setAuthorizedConversation] = useState<{ id: string; generation: number } | null>(null);
+  // Live mode: the attendee this phone held in view for the full countdown. Their
+  // phone must hold this user too; the server pairs both sightings.
+  const liveHeld = useRef<{ id: string; seenAt: number } | null>(null);
+  const [liveHeldId, setLiveHeldId] = useState<string | null>(null);
 
   const publishCountdown = useCallback((next: RecognitionCountdownView) => {
     displayedCountdown.current = next;
@@ -106,6 +111,8 @@ export function LiveCameraScreen() {
     publishCountdown(emptyCountdown);
     setDemoPairPending(false);
     setAuthorizedConversation(null);
+    liveHeld.current = null;
+    setLiveHeldId(null);
     setOverlays([]);
   }, [publishCountdown, setDemoPairPending, setAuthorizedConversation]);
 
@@ -146,9 +153,16 @@ export function LiveCameraScreen() {
   }, [active?.id, resetCountdown]);
 
   useEffect(() => {
-    if (app.mode !== 'demo' || !focused || !enabled) return;
+    if (!focused || !enabled) return;
     const timer = setInterval(() => {
       if (!mounted.current || attempt.current !== null) return;
+      const held = liveHeld.current;
+      if (held && performance.now() - held.seenAt > LIVE_HOLD_LOST_MS) {
+        // They left the frame before the other phone held this user: start over.
+        countdown.current.reset();
+        liveHeld.current = null;
+        setLiveHeldId(null);
+      }
       const next = countdown.current.view(performance.now());
       if (displayedCountdown.current.partnerId && !next.partnerId) setOverlays([]);
       publishCountdown(next);
@@ -250,7 +264,24 @@ export function LiveCameraScreen() {
       return;
     }
     if (!directory?.scanned) return;
-    for (const personId of stable) report(personId, now);
+    const t = performance.now();
+    const partnerIds = results.flatMap(({ match }) =>
+      match && match.profileId !== me?.id && people.has(match.profileId) ? [match.profileId] : []);
+    const held = liveHeld.current;
+    if (held) {
+      if (partnerIds.includes(held.id)) { held.seenAt = t; report(held.id, now); }
+      return;
+    }
+    // Hold exactly one recognized attendee for the countdown (this camera cannot
+    // see its own user, so self is implied). Their phone runs the same hold on you.
+    const ids = me?.id && partnerIds.length === 1 ? [me.id, partnerIds[0]!] : partnerIds;
+    const next = countdown.current.observe(ids, me?.id, t, frame.sampledAt);
+    publishCountdown(next);
+    if (next.completed && next.partnerId) {
+      liveHeld.current = { id: next.partnerId, seenAt: t };
+      setLiveHeldId(next.partnerId);
+      report(next.partnerId, now);
+    }
   }, [focused, enabled, templates, me, people, event?.title, pairing, active,
     app.mode, directory?.scanned, publishCountdown, pairAfterHold, report]);
 
@@ -260,7 +291,9 @@ export function LiveCameraScreen() {
   const cameraActive = focused && enabled && Platform.OS === 'web';
   const counting = countdownView.secondsRemaining !== null;
   const partnerName = firstName(people.get(countdownView.partnerId ?? '')?.name ?? 'your partner');
-  const flashing = app.mode === 'demo' && !demoPairPending && !active && inFinalStretch(countdownView);
+  const flashing = !demoPairPending && !active && inFinalStretch(countdownView);
+  const live = app.mode === 'live';
+  const heldName = firstName(people.get(liveHeldId ?? '')?.name ?? 'They');
   // A 4:3 landscape window, as large as the column allows while the countdown card stays on screen.
   const cameraWidth = Math.max(240, Math.min(Math.min(width, 520) - 48, (height - 410) * 4 / 3));
   const cameraSize = { width: cameraWidth, height: cameraWidth * 3 / 4 };
@@ -276,14 +309,25 @@ export function LiveCameraScreen() {
           <Text style={s.title}>Who’s here?</Text>
           <Text style={s.muted}>{app.mode === 'demo'
             ? 'Keep both registered faces in this camera for three seconds. If either leaves, the countdown restarts.'
-            : 'Point your camera at the room. People with a face scan get a box with their name and something to talk about. Once you recognize each other, your conversation starts.'}</Text>
-          {app.mode === 'demo' && <View testID="recognition-countdown"
+            : 'Face the person you’re talking to and point your camera at them while they point theirs at you. Hold for three seconds; once both phones recognize each other, your conversation starts.'}</Text>
+          {<View testID="recognition-countdown"
             accessibilityLiveRegion="polite"
-            style={[s.soft, { backgroundColor: counting || demoPairPending ? colors.blueLight : colors.canvas,
+            style={[s.soft, { backgroundColor: counting || demoPairPending || liveHeldId ? colors.blueLight : colors.canvas,
               borderWidth: 1, borderColor: colors.line, gap: 12 }]}>
             <View style={s.between}>
               <View style={[s.grow, { gap: 3 }]}>
-                <Text style={[s.eyebrow, { fontSize: 10, letterSpacing: 1 }]}>SAME-CAMERA DEMO</Text>
+                <Text style={[s.eyebrow, { fontSize: 10, letterSpacing: 1 }]}>{live ? 'LIVE RECOGNITION' : 'SAME-CAMERA DEMO'}</Text>
+                {live ? <>
+                  <Text style={s.label}>{active ? 'Opening your conversation…'
+                    : liveHeldId ? pairing[liveHeldId] ?? `Connecting with ${heldName}…`
+                      : counting ? `${partnerName} recognized. Hold steady.` : 'Looking for a registered attendee'}</Text>
+                  <Text style={s.small}>{active ? 'Keeping your camera live.'
+                    : liveHeldId ? `${heldName}’s phone has to hold you in view too. Keep facing each other.`
+                      : counting ? 'Keep them in view until the countdown finishes.'
+                        : !directory?.scanned ? 'Go back to registration and scan your own face.'
+                          : recognizable === 0 ? 'Nobody else here has a face scan yet.'
+                            : 'Point your camera at one person while their phone points at you.'}</Text>
+                </> : <>
                 <Text style={s.label}>{demoPairPending ? 'Starting your conversation…'
                   : active ? 'A conversation is already open.'
                     : counting ? 'Both recognized. Stay in frame.' : 'Waiting for both faces'}</Text>
@@ -293,6 +337,7 @@ export function LiveCameraScreen() {
                       : !directory?.scanned ? 'Go back to registration and scan yourself and one other attendee.'
                         : recognizable === 0 ? 'Go back to registration and add another attendee.'
                           : 'You + one registered attendee, visible together.'}</Text>
+                </>}
               </View>
               <View style={{ width: 48, height: 48, borderRadius: 24, alignItems: 'center',
                 justifyContent: 'center', backgroundColor: counting ? colors.blue : colors.paper, flexShrink: 0 }}>
@@ -302,7 +347,7 @@ export function LiveCameraScreen() {
                     style={[s.title, { color: colors.paper, fontSize: 28, lineHeight: 34, fontVariant: ['tabular-nums'] }]}>
                     {countdownView.secondsRemaining}
                   </Text>
-                  : <Icon name={demoPairPending ? 'arrow-right' : 'users'} size={21} color={colors.blue} />}
+                  : <Icon name={demoPairPending || liveHeldId ? 'arrow-right' : 'users'} size={21} color={colors.blue} />}
               </View>
             </View>
             <View accessibilityRole="progressbar" accessibilityLabel="Recognition hold progress"
@@ -311,7 +356,7 @@ export function LiveCameraScreen() {
               <View style={{ height: 4, borderRadius: 2, backgroundColor: colors.blue,
                 width: `${Math.round(countdownView.progress * 100)}%` }} />
             </View>
-            {active && !demoPairPending && <Button tone="secondary" icon="arrow-right"
+            {!live && active && !demoPairPending && <Button tone="secondary" icon="arrow-right"
               disabled={busy}
               onPress={() => {
                 if (!focused || !pageVisible() || leaving.current) return;

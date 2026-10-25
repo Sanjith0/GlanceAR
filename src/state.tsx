@@ -1,4 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { Platform } from 'react-native';
 import type { FaceDirectory, GlanceDataClient, ProfileInput, SightingResult, Snapshot } from './domain';
 import { FACE_MODEL, FACE_SCAN_POLICY_VERSION } from './domain';
 import { createGlanceClient } from './data/convexClient';
@@ -68,9 +69,15 @@ export function GlanceProvider({ children }: { children: React.ReactNode }) {
   const preparePhoneCapture = useCallback(() => {
     if (permissionRequest.current) return permissionRequest.current;
     const request = (async () => {
-      if (!isAudioCaptureAvailable()) throw new Error('Capture requires the iPhone development build, not Expo Go or a browser.');
-      if (!await requestAudioPermission()) throw new Error('Microphone permission is off. Enable it in iPhone Settings before using Glance capture.');
-      if (!await requestGestureCameraPermission()) throw new Error('Camera permission is off. Enable it in iPhone Settings for the three-finger finish.');
+      const web = Platform.OS === 'web';
+      if (!isAudioCaptureAvailable()) throw new Error(web
+        ? 'This browser cannot record audio. Open Glance in Safari or Chrome over HTTPS.'
+        : 'Capture requires the iPhone development build, not Expo Go.');
+      if (!await requestAudioPermission()) throw new Error(web
+        ? 'Microphone access is off. Allow it for this site in your browser settings, then tap Prepare this device.'
+        : 'Microphone permission is off. Enable it in iPhone Settings before using Glance capture.');
+      // Browsers grant the camera when LIVE Camera opens; the native gesture camera needs its own check.
+      if (!web && !await requestGestureCameraPermission()) throw new Error('Camera permission is off. Enable it in iPhone Settings for the three-finger finish.');
       setPhoneCaptureReady(true);
     })();
     permissionRequest.current = request;

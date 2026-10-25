@@ -345,7 +345,7 @@ describe("private audio, two-person exchange, processing, and deletion", () => {
     expect(JSON.parse(summary.body).model).toBe("muse-spark-1.3");
     expect(JSON.parse(summary.body).response_format.json_schema.strict).toBe(true);
     const result = (await t.query(api.snapshot, { token: tokens[0] })).conversations[0];
-    expect(result.recap).toEqual(recap);
+    expect(result.recap).toEqual({ ...recap, transcript: expect.any(Array) });
     expect(await t.run((ctx) => ctx.storage.get(s.storageId))).toBeNull();
   });
   it("cancellation while transcription is in-flight blocks the second call and publication", async () => {

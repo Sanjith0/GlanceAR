@@ -22,10 +22,10 @@ export const process = internalAction({
       validateWav(bytes, Math.max(0, job.endedAt - job.startedAt) + 2000);
       if (!await ctx.runQuery(anyApi.jobs.canProcess, args)) return;
       const base = metaBaseUrl(env.META_API_BASE_URL);
-      const { forSummary } = await transcribeDiarized(key, bytes, base);
+      const { turns, forSummary } = await transcribeDiarized(key, bytes, base);
       if (!await ctx.runQuery(anyApi.jobs.canProcess, args)) return;
       const recap = await summarizeTranscript(key, forSummary, base);
-      await ctx.runMutation(anyApi.jobs.finish, { ...args, recap });
+      await ctx.runMutation(anyApi.jobs.finish, { ...args, recap: { ...recap, transcript: turns } });
     } catch (error) {
       // Never log provider bodies, API keys, transcripts, photos, or device credentials; the code is ours.
       console.error(`Recap processing failed: ${failureCode(error)}`);

@@ -6,6 +6,7 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import { Badge, Button, Empty, Field, Icon, Notice, Page, Portrait, Wordmark } from './components';
 import { colors, fonts, s } from './theme';
 import { deploymentURL, useGlance } from './state';
+import { isAudioCaptureAvailable } from './capture/audio';
 import { samplePeople } from './demo';
 import type { Conversation, Profile } from './domain';
 import { useConversationCapture } from './useConversationCapture';
@@ -173,7 +174,8 @@ export function EventScreen() {
   const enabled = selected && Boolean(app.snapshot?.eventPermission?.enabled);
   const active = app.snapshot?.conversations.find(c => c.eventId === id && c.consentMode === 'event' && ['consent', 'recording'].includes(c.status));
   const source = active && active.recorderId === meId ? active.captureSource ?? 'phone' : app.captureSource;
-  const nativePhone = app.mode === 'live' && Platform.OS !== 'web' && source === 'phone';
+  // Phones and browsers both record with their own microphone in live mode.
+  const nativePhone = app.mode === 'live' && source === 'phone' && (Platform.OS !== 'web' || isAudioCaptureAvailable());
   const captureReady = !nativePhone || app.phoneCaptureReady;
   const { phoneCaptureReady, preparePhoneCapture, run } = app;
   const pairAttendee = app.pair;
@@ -231,7 +233,7 @@ export function EventScreen() {
         {enabled
           ? <Button tone="secondary" icon="pause" busy={busy} onPress={() => void perform(() => app.setEventPermission(id, false))}>Pause Glance for this event</Button>
           : <Button icon="check" busy={busy} onPress={() => void perform(enable)}>Enable Glance for this event</Button>}
-        {enabled && nativePhone && !app.phoneCaptureReady && <Button tone="ghost" busy={busy} onPress={() => void perform(app.preparePhoneCapture)}>Prepare this iPhone</Button>}
+        {enabled && nativePhone && !app.phoneCaptureReady && <Button tone="ghost" busy={busy} onPress={() => void perform(app.preparePhoneCapture)}>{Platform.OS === 'web' ? 'Prepare this device' : 'Prepare this iPhone'}</Button>}
       </View>
       {app.mode === 'live' && Platform.OS === 'ios' && !active && <View style={s.card}>
         <Text style={s.label}>Your capture setup</Text>
@@ -287,7 +289,7 @@ export function ProfileScreen() {
       <View style={[s.grow, { gap: 5 }]}><Text style={s.label}>{item.title}</Text><Text style={s.small}>{item.text}</Text></View></View>)}
     <View style={s.divider} />
     <View style={{ gap: 9 }}><Text style={s.label}>Build status</Text>
-      <Text style={s.small}>Browser hand detection uses your real camera. {app.demoSummaries ? 'The preview also records conversations through your browser microphone for summaries via your local backend; live' : 'Live'} microphone capture still needs the iPhone development build, not Expo Go. The separate Meta DAT harness and updated iPhone gesture overlays still need physical-device testing.</Text>
+      <Text style={s.small}>Browser hand detection uses your real camera. {app.demoSummaries ? 'The preview also records conversations through your browser microphone for summaries via your local backend.' : 'The sample walkthrough never records audio.'} In live mode, the recording device uses its own microphone, in Safari, Chrome or the iPhone development build (not Expo Go). The separate Meta DAT harness and updated iPhone gesture overlays still need physical-device testing.</Text>
       <Button tone="ghost" onPress={() => app.setMode(app.mode === 'demo' ? 'live' : 'demo')}>
         {app.mode === 'demo' ? 'Switch to configured backend' : 'Explore sample walkthrough'}
       </Button>
@@ -546,7 +548,7 @@ export function ConversationScreen() {
         <Text style={s.muted}>You and {other.name.split(' ')[0]} enabled Glance at event entry. Capture starts automatically when both phones are ready.</Text></View>
       <View style={s.card}><PersonRow person={other} /><Text style={s.small}>Keep both conversation screens open. There is no new approval to complete.</Text></View>
       {harness ? <GlassesHandoff conversation={conversation} /> : <>
-        {isRecorder && !capture.available && <Notice>Live capture needs the iPhone development build with the native audio module. This browser or Expo Go cannot record.</Notice>}
+        {isRecorder && !capture.available && <Notice>{Platform.OS === 'web' ? 'This browser cannot record audio. Open Glance in Safari or Chrome over HTTPS on this device.' : 'Live capture needs the iPhone development build with the native audio module. Expo Go cannot record.'}</Notice>}
         {isRecorder && capture.available && !app.phoneCaptureReady && <Button tone="secondary" onPress={backToEvent}>Set up capture at event entry</Button>}
         {(!isRecorder || capture.available && app.phoneCaptureReady) && <View style={s.row}><ActivityIndicator color={colors.blue} /><Text style={[s.muted, s.grow]}>{capture.busy ? 'Preparing your recording device…' : 'Waiting for both devices to be ready…'}</Text></View>}
       </>}
