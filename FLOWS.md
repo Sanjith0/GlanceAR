@@ -2,6 +2,13 @@
 
 This repository started empty. The browser preview is a labelled sample-data walkthrough with real local hand inference, not evidence of native hardware or live audio/transcription operation.
 
+## October 25 frontend redesign
+
+The phone interface was redesigned around a cream/powder/plum identity (see `docs/DESIGN.md`) with a signed-out welcome, a four-step signup (sample face scan → details → interests → review), Partiful-style invitations with RSVP, People to meet, a sample live-recognition surface, connection detail with a private note, and a developer state selector at `/dev`. Integration seams and preserved contracts are in `docs/FRONTEND-HANDOFF.md`. Two entries below changed with it:
+
+- **Encounter:** entering the sample event no longer auto-pairs after a delay. Pairing starts explicitly from the live view ("Start a conversation" on a recognized person) or from the camera lab's three-second hold. The backend contract is unchanged: pairing creates the conversation under both standing event permissions, with no per-conversation approval or Start button.
+- **LIVE Camera:** the real face-recognition screen, its face database and the same-camera hold remain at `/live/[id]` as the camera lab, reached from Developer rather than from the event page. The event page's "Open live view" opens the new recognition surface, whose viewport is the slot for that camera feed.
+
 ## Three-second LIVE Camera revision acceptance inventory
 
 Baseline inspected in the browser on October 25 on `main` at `722bff4`: the LIVE Camera page shows the face database and video window, but no countdown. Its demo sighting shortcut simulates a reciprocal recognition after 1.5 seconds and automatically routes any active conversation. This revision is limited to the laptop/browser demo's camera-to-conversation transition; live authenticated reciprocal sightings and the existing hand-finish/capture pipeline are not being replaced.

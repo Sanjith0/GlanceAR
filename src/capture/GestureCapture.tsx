@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
-import { fonts } from '../theme';
+import { colors, fonts } from '../theme';
 import { assessHand, TwoHandGate } from '../handGesture';
 import { startHandTracking } from './handEngine';
 import { drawHandOverlays } from './handOverlay';
@@ -169,13 +169,13 @@ export default function GestureCapture({ active, armed = true, sessionId, source
 }
 
 const styles = StyleSheet.create({
-  frame: { minHeight: 240, backgroundColor: '#10161b', borderRadius: 18, overflow: 'hidden' },
-  live: { position: 'absolute', top: 12, left: 12, paddingHorizontal: 9, paddingVertical: 6, borderRadius: 6, backgroundColor: 'rgba(0,0,0,0.6)' },
-  liveText: { color: '#FFFFFF', fontFamily: fonts.semibold, fontSize: 11, letterSpacing: 1 },
-  retry: { position: 'absolute', top: 8, right: 8, minHeight: 44, justifyContent: 'center', paddingHorizontal: 12, borderRadius: 8, backgroundColor: '#FFFFFF' },
-  retryText: { color: '#17323b', fontFamily: fonts.semibold, fontSize: 12 },
-  caption: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: 12, gap: 8, backgroundColor: 'rgba(0,0,0,0.72)' },
-  captionText: { color: '#FFFFFF', fontFamily: fonts.body, fontSize: 12, lineHeight: 17 },
+  frame: { minHeight: 240, backgroundColor: colors.ink, borderRadius: 22, overflow: 'hidden' },
+  live: { position: 'absolute', top: 12, left: 12, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: 'rgba(240,228,202,0.16)' },
+  liveText: { color: colors.cream, fontFamily: fonts.medium, fontSize: 11, letterSpacing: 0.4 },
+  retry: { position: 'absolute', top: 8, right: 8, minHeight: 44, justifyContent: 'center', paddingHorizontal: 14, borderRadius: 999, backgroundColor: colors.cream },
+  retryText: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 13 },
+  caption: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: 12, gap: 8, backgroundColor: 'rgba(48,42,49,0.82)' },
+  captionText: { color: colors.cream, fontFamily: fonts.body, fontSize: 12, lineHeight: 17 },
   track: { height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2, overflow: 'hidden' },
   progress: { height: 4, backgroundColor: '#38E59A' },
 });

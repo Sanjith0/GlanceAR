@@ -21,6 +21,10 @@ Meet in person. Keep the conversation, not just the contact. Glance is an iPhone
 
 The event disclosure explicitly authorizes **either participant's** finish gesture or button to connect and share. The gesture is a completion signal under both standing permissions, not a new identity credential or retroactive recording consent. Event revocation fences unfinished work; re-enabling cannot resurrect an old recording.
 
+## Redesigned frontend (October 25)
+
+The interface, onboarding and event experience were redesigned: `docs/DESIGN.md` has the design rationale (palette, Fraunces + Inter, the arch motif, event covers) and `docs/FRONTEND-HANDOFF.md` says where real services plug into the typed adapters in `src/services/`, which contracts were preserved, and where the sample data lives. In the browser walkthrough: open the app signed out, **Sign up** (sample face scan, details, interests with a sample LinkedIn import, review) or **Log in** as the sample account, then try an invitation (`INK9`), create an event, open **People to meet** and the **live view**, and finish a conversation into a shared recap and chat. Developer preview states (empty, loading, error, interrupted scan, unknown or uncertain recognition) live at `/dev`.
+
 ## Stack and layout
 
 | Layer | Implementation |
@@ -38,8 +42,11 @@ The event disclosure explicitly authorizes **either participant's** finish gestu
 
 ```text
 src/app/                    Expo Router screens
-src/screens.tsx             Phone interface and explicit sample walkthrough
+src/onboarding/, src/screens/   Welcome, signup, events, invitations, people, live view, connections, You, developer states
+src/screens.tsx             Conversation screen (capture, finish, green acknowledgment) and shared hooks
 src/ConversationChat.tsx    Shared recap, two-person messages and deletion controls
+src/services/, src/fixtures/    Typed contracts, sample adapters, view-model hooks and fictional sample data
+src/ui/, src/theme.ts, src/components.tsx   Design tokens, primitives, arch motif and event covers
 src/state.tsx               Device session, live backend and separate demo state
 src/data/                   Typed Convex client
 src/capture/                Native/web capability adapters

@@ -2,7 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import type { FaceDirectory, GlanceDataClient, ProfileInput, SightingResult, Snapshot } from './domain';
 import { FACE_MODEL, FACE_SCAN_POLICY_VERSION } from './domain';
 import { createGlanceClient } from './data/convexClient';
-import { createDemoEncounter, demoFaceDirectory, demoReducer, demoSnapshot, initialDemo, type DemoAction } from './demo';
+import { createDemoEncounter, demoFaceDirectory, demoReducer, demoSnapshot, initialDemo, type DemoAction, type DemoState } from './demo';
 import { getDeviceToken } from './session';
 import { demoSummaryURL, summarizeDemoAudio } from './data/demoSummaryClient';
 import { browserAudioSupported } from './capture/browserAudio';
@@ -49,6 +49,8 @@ interface GlanceState {
   demoSummaries: boolean;
   /** Uploads one finished demo recording and fills in its pending recap (or the failure). */
   summarizeDemo: (conversationId: string, wav: Blob) => Promise<void>;
+  /** The in-memory sample world (people, memberships, permissions) while in demo mode; null against a live backend. */
+  demoState: DemoState | null;
 }
 const Context = createContext<GlanceState | null>(null);
 export function GlanceProvider({ children }: { children: React.ReactNode }) {
@@ -230,6 +232,7 @@ export function GlanceProvider({ children }: { children: React.ReactNode }) {
     saveFaceScan, deleteFaceScan, addDemoPerson, reportSighting,
     demoFaceDirectory: eventId => demoFaceDirectory(sample, eventId),
     demoSummaries, summarizeDemo,
+    demoState: mode === 'demo' ? sample : null,
   }}>{children}</Context.Provider>;
 }
 export function useGlance(): GlanceState {
