@@ -28,4 +28,5 @@ This repository started empty. The browser preview is a labelled sample-data wal
 - Navigate events, connections, profile, enrollment, event detail, conversation, and recap without changing the document pathname or query.
 - Exercise event entry, automatic sample encounter, gesture finish and immediate shared chat at phone width; verify the removed approval/start/confirmation controls never appear.
 - Confirm browser back/forward and fresh hash deep links restore the correct route; missing in-memory conversations show the existing safe unavailable state.
+- Check all three bottom-tab labels have at least a 16px line box, do not flex-shrink, and remain fully visible at phone and desktop viewport heights.
 - Confirm no browser storage is introduced, native resolution still uses unmodified Expo modules, and no backend/native/safety source changes are required.
