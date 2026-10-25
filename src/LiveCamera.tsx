@@ -7,6 +7,7 @@ import { useFaceDirectory, useGlance } from './state';
 import { DemoBanner, GlobalStatus, useOperation, useScreenFocused } from './screens';
 import FaceCamera, { type FaceFrame, type FaceOverlay } from './capture/FaceCamera';
 import { cancelLiveCameraHandoff, prepareLiveCameraHandoff } from './capture/liveCameraStream';
+import { glassesCameraActive } from './capture/glassesBridge';
 import { consistentSamples, faceDistance, matchDescriptor, MATCH_THRESHOLD, RecognitionTracker, scanProblem } from './face';
 import { talkingPoints } from './talkingPoints';
 import { DEMO_FACE_LIMIT, FACE_SCAN_SAMPLES, SIGHTING_REPORT_INTERVAL_MS } from './domain';
@@ -97,6 +98,7 @@ export function LiveCameraScreen() {
   const [scopeGeneration, setScopeGeneration] = useState(0);
   const [demoPairPending, setDemoPairPending] = useState(false);
   const [authorizedConversation, setAuthorizedConversation] = useState<{ id: string; generation: number } | null>(null);
+  const glasses = glassesCameraActive();
 
   const publishCountdown = useCallback((next: RecognitionCountdownView) => {
     displayedCountdown.current = next;
@@ -301,6 +303,9 @@ export function LiveCameraScreen() {
         const person = match ? people.get(match.profileId) : undefined;
         return person?.glanceEnabled ? person.id : null;
       });
+      // Meta glasses film from the wearer's eyes, so the wearer is never in frame.
+      // The wearer counts as present; the hold still needs exactly one other face.
+      if (glasses && me?.id && !ids.includes(me.id)) ids.push(me.id);
       const next = countdown.current.observe(ids, me?.id, performance.now(), frame.sampledAt);
       publishCountdown(next);
       if (next.completed && next.partnerId) pairAfterHold(next.partnerId);
@@ -309,7 +314,7 @@ export function LiveCameraScreen() {
     if (!directory?.scanned) return;
     for (const personId of stable) report(personId, now);
   }, [focused, enabled, scanFrame, templates, me, people, event?.title, pairing, active, newPerson,
-    app.mode, directory?.scanned, publishCountdown, pairAfterHold, report]);
+    app.mode, directory?.scanned, publishCountdown, pairAfterHold, report, glasses]);
 
   const recognizable = templates.filter(t => t.profileId !== me?.id && people.has(t.profileId)).length;
   const cameraActive = focused && enabled && Platform.OS === 'web';
@@ -329,7 +334,8 @@ export function LiveCameraScreen() {
       </View> : <>
         <View style={{ gap: 12 }}><Text style={s.title}>Who’s here?</Text>
           <Text style={s.muted}>{app.mode === 'demo'
-            ? 'Keep both registered faces in this camera for three seconds. If either leaves, the countdown restarts.'
+            ? glasses ? 'Look at one registered attendee through your Meta glasses for three seconds. If they leave the view, the countdown restarts.'
+              : 'Keep both registered faces in this camera for three seconds. If either leaves, the countdown restarts.'
             : 'Point your camera at the room. People with a face scan get a box with their name and something to talk about. Once you recognize each other, your conversation starts.'}</Text>
           {app.mode === 'demo' && <View testID="recognition-countdown"
             accessibilityLiveRegion="polite"
@@ -337,18 +343,19 @@ export function LiveCameraScreen() {
               borderWidth: 1, borderColor: colors.line, gap: 12 }]}>
             <View style={s.between}>
               <View style={[s.grow, { gap: 3 }]}>
-                <Text style={[s.eyebrow, { fontSize: 10, letterSpacing: 1 }]}>SAME-CAMERA DEMO</Text>
+                <Text style={[s.eyebrow, { fontSize: 10, letterSpacing: 1 }]}>{glasses ? 'META GLASSES CAMERA' : 'SAME-CAMERA DEMO'}</Text>
                 <Text style={s.label}>{demoPairPending ? 'Starting your conversation…'
                   : active ? 'A conversation is already open.'
-                    : counting ? 'Both recognized. Stay in frame.' : 'Waiting for both faces'}</Text>
+                    : counting ? glasses ? 'Recognized. Keep looking.' : 'Both recognized. Stay in frame.'
+                      : glasses ? 'Waiting for a registered attendee' : 'Waiting for both faces'}</Text>
                 <Text style={s.small}>{demoPairPending ? 'Keeping your camera live.'
                   : active ? 'Resume it, or stop it before starting another.'
                     : scanView ? 'Finish this scan, then bring both people into view.'
                       : newPerson ? 'Finish adding this attendee before starting the hold.'
                         : counting ? `You and ${partnerName}. Hold until the countdown finishes.`
-                          : !directory?.scanned ? 'Scan yourself and one other attendee below.'
+                          : !directory?.scanned && !glasses ? 'Scan yourself and one other attendee below.'
                             : recognizable === 0 ? 'Add another attendee’s face scan below.'
-                              : 'You + one registered attendee, visible together.'}</Text>
+                              : glasses ? 'Look at one registered attendee.' : 'You + one registered attendee, visible together.'}</Text>
               </View>
               <View style={{ width: 48, height: 48, borderRadius: 24, alignItems: 'center',
                 justifyContent: 'center', backgroundColor: counting ? colors.blue : colors.paper, flexShrink: 0 }}>

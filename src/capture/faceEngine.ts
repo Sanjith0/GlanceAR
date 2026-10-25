@@ -1,4 +1,5 @@
 import { compactDescriptor, MIN_FACE_WIDTH, type FaceBox } from '../face';
+import { glassesCameraActive } from './glassesBridge';
 
 /**
  * Browser-only, on-device face detection and 128-number descriptors (face-api.js,
@@ -17,7 +18,7 @@ function modelBase(): string {
 
 export function faceEngineSupported(): boolean {
   return typeof window !== 'undefined' && typeof navigator !== 'undefined'
-    && Boolean(navigator.mediaDevices?.getUserMedia) && window.isSecureContext;
+    && Boolean(navigator.mediaDevices?.getUserMedia) && (window.isSecureContext || glassesCameraActive());
 }
 
 export function loadFaceEngine(): Promise<FaceApi> {

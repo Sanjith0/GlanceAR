@@ -51,6 +51,7 @@
     "test": "vitest run && npm run test:glasses",
     "test:glasses": "node --test ios-glasses/tests/source-contract.test.cjs",
     "build:web": "npm run prepare:models && expo export --platform web && node scripts/portable-web-export.mjs",
+    "build:glasses": "EXPO_PUBLIC_CONVEX_URL= EXPO_PUBLIC_CONVEX_SITE_URL= npm run build:web",
     "backend:dev": "convex dev",
     "postinstall": "npm run prepare:models"
   },

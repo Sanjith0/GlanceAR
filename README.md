@@ -215,3 +215,7 @@ EXPO_NO_DOTENV=1 EXPO_PUBLIC_CONVEX_URL= npm run build:web
 With the anonymous local Convex process running, `node tests/backendLive.mjs` exercises the real local backend and native HTTP envelope without making Meta requests. Native Swift tests and the physical-device checklist are supplied in the capture modules and glasses guide, but they must be run on a Mac and actual devices before claiming the phone or glasses flow works.
 
 See [the verification record](docs/VERIFICATION.md) for the actual checks performed and remaining gaps. The included upstream Expo scaffold notice is retained separately in `THIRD_PARTY_NOTICES`; decide the application code's distribution license before a public release.
+
+## Meta glasses as the camera
+
+`ios-glasses-live` runs this same app on iPhone, using a live feed from Meta glasses instead of the iPhone camera. See [docs/META-GLASSES-LIVE.md](docs/META-GLASSES-LIVE.md).

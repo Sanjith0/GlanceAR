@@ -49,3 +49,4 @@ qa/
 
 # Prepared camera model/runtime assets; reproducible with npm run prepare:models
 public/models/
+ios-glasses-live/*.xcodeproj/

@@ -5,6 +5,7 @@ import { assessHand, TwoHandGate } from '../handGesture';
 import { startHandTracking } from './handEngine';
 import { drawHandOverlays } from './handOverlay';
 import { acquireLiveCameraStream } from './liveCameraStream';
+import { glassesCameraActive } from './glassesBridge';
 
 export type GestureSignal = { hands: number; stable: boolean; source: 'phone' | 'glasses' };
 export type GestureCaptureProps = {
@@ -77,7 +78,7 @@ export default function GestureCapture({ active, armed = true, sessionId, source
     };
     if (!active || !visible) { report('Camera off'); return; }
     if (source !== 'phone') { report('Glasses video is not available in this browser. No gesture is simulated.'); return; }
-    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+    if (!(window.isSecureContext || glassesCameraActive()) || !navigator.mediaDevices?.getUserMedia) {
       report('Camera unavailable. Open this page over HTTPS in a current browser.'); return;
     }
     void (async () => {
