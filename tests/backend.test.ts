@@ -74,10 +74,10 @@ beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-24T15:
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 describe("device-scoped authentication and redaction", () => {
-  it("requires a strong-format token and a required image, and hashes credentials", async () => {
+  it("requires a strong-format token and a valid image when given, and hashes credentials", async () => {
     const t = makeTest();
     await expect(t.mutation(api.register, { token: "guessable", ...input("A") })).rejects.toThrow("Invalid device");
-    await expect(t.mutation(api.register, { token: tokens[0], ...input("A"), photoUrl: "" })).rejects.toThrow("selfie");
+    await expect(t.mutation(api.register, { token: tokens[0], ...input("A"), photoUrl: "data:image/gif;base64,R0lG" })).rejects.toThrow("selfie");
     await expect(t.mutation(api.register, { token: tokens[0], ...input("A"), photoUrl: "data:image/png;base64,YWJj" })).rejects.toThrow("does not match");
     const id = await t.mutation(api.register, { token: tokens[0], ...input("A") });
     expect(await t.mutation(api.register, { token: tokens[0], ...input("Ignored") })).toBe(id);
@@ -86,6 +86,12 @@ describe("device-scoped authentication and redaction", () => {
     const snapshot = await t.query(api.snapshot, { token: tokens[0] });
     expect(snapshot.me).toEqual({ id, ...input("A") });
     expect(JSON.stringify(snapshot)).not.toContain("tokenHash");
+  });
+  it("accepts a profile without a portrait", async () => {
+    const t = makeTest();
+    const id = await t.mutation(api.register, { token: tokens[0], ...input("A"), photoUrl: "" });
+    const snapshot = await t.query(api.snapshot, { token: tokens[0] });
+    expect(snapshot.me).toEqual({ id, ...input("A"), photoUrl: "" });
   });
   it("blocks outsider event reads, pairing, and conversation mutations", async () => {
     const t = makeTest();

@@ -54,9 +54,11 @@ function validateProfile(input: { name: string; role: string; photoUrl: string }
   if (!input.name.trim() || input.name.length > 80 || input.role.length > 120) {
     fail("Use a name up to 80 characters and role up to 120 characters.");
   }
+  // The portrait is optional; an empty string means "no photo" (initials are shown).
+  if (!input.photoUrl) return { name: input.name.trim(), role: input.role.trim(), photoUrl: "" };
   if (input.photoUrl.length > 350_000 ||
     !/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(input.photoUrl)) {
-    fail("A JPEG, PNG, or WebP selfie under 350 KB encoded is required.");
+    fail("Use a JPEG, PNG, or WebP selfie under 350 KB encoded, or skip the portrait.");
   }
   // A file signature check rejects non-image payloads masquerading as images.
   const [header, body] = input.photoUrl.split(",");

@@ -138,7 +138,7 @@ export function GlanceProvider({ children }: { children: React.ReactNode }) {
     setModeState(next); setError(''); setLoading(next === 'live'); selectEvent(undefined);
   };
   const saveProfile = async (profile: ProfileInput) => {
-    if (!profile.name.trim() || !profile.photoUrl) throw new Error('Add your name and a portrait to continue.');
+    if (!profile.name.trim()) throw new Error('Add your name to continue.');
     if (mode === 'demo') { dispatch({ type: 'profile', profile: { ...profile, id: sample.actor } }); return; }
     if (!client || !token) throw new Error('Your device session is not ready.');
     if (needsEnrollment) await client.register(token, profile); else await client.updateProfile(token, profile);

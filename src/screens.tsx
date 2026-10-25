@@ -96,6 +96,16 @@ function ConversationLink({ conversation }: { conversation: Conversation }) {
   </Pressable>;
 }
 
+/** Starter events for the create form; both fields stay editable. */
+export const EVENT_PRESETS: readonly { title: string; location: string }[] = [
+  { title: 'Builders Night', location: 'The Commons, Downtown Dallas' },
+  { title: 'AI Founders Mixer', location: 'Capital Factory, Austin' },
+  { title: 'Campus Startup Social', location: 'UT Dallas Student Union' },
+  { title: 'Design & Tech Meetup', location: 'WeWork, Uptown Dallas' },
+  { title: 'Growth Engineers Happy Hour', location: 'Deep Ellum Brewing Co., Dallas' },
+];
+let presetCursor = Math.floor(Math.random() * EVENT_PRESETS.length);
+
 export function EventsScreen() {
   const app = useGlance();
   const [form, setForm] = useState<'create' | 'join' | null>(null);
@@ -134,7 +144,14 @@ export function EventsScreen() {
     {app.snapshot && !app.snapshot.events.length && <Empty icon="calendar" title="Your room is waiting." text="Create an event or enter an invitation code to find your people." />}
     {!app.needsEnrollment && <View style={s.row}>
       <View style={s.grow}><Button tone="ghost" icon="log-in" onPress={() => setForm(form === 'join' ? null : 'join')}>Join with code</Button></View>
-      <View style={s.grow}><Button tone="ghost" icon="plus" onPress={() => setForm(form === 'create' ? null : 'create')}>Create event</Button></View>
+      <View style={s.grow}><Button tone="ghost" icon="plus" onPress={() => {
+        if (form === 'create') { setForm(null); return; }
+        if (!title.trim() && !location.trim()) {
+          const preset = EVENT_PRESETS[presetCursor++ % EVENT_PRESETS.length];
+          setTitle(preset.title); setLocation(preset.location);
+        }
+        setForm('create');
+      }}>Create event</Button></View>
     </View>}
     {form && <View style={s.card}>
       <View style={s.between}><Text style={s.heading}>{form === 'create' ? 'Bring people together.' : 'You’re invited.'}</Text>
@@ -142,7 +159,7 @@ export function EventsScreen() {
       {form === 'create' ? <>
         <Field label="Event name" value={title} onChangeText={setTitle} maxLength={100} placeholder="An evening with builders" />
         <Field label="Location" value={location} onChangeText={setLocation} maxLength={160} placeholder="Where are you meeting?" />
-        <Button busy={busy} onPress={() => void perform(async () => openEvent(await app.createEvent(title, location)))}>Create your event</Button>
+        <Button busy={busy} onPress={() => void perform(async () => { const id = await app.createEvent(title, location); setTitle(''); setLocation(''); setForm(null); openEvent(id); })}>Create your event</Button>
       </> : <>
         <Field label="Invitation code" value={code} onChangeText={setCode} autoCapitalize="characters" autoCorrect={false} maxLength={24} placeholder={app.mode === 'demo' ? 'Try GL26' : 'Enter the host’s code'} />
         <Button busy={busy} onPress={() => void perform(async () => openEvent(await app.joinEvent(code)))}>Join event</Button>
@@ -327,16 +344,16 @@ export function EnrollmentScreen() {
       {photo ? <Portrait person={{ id: 'preview', name: name || 'Your', role, photoUrl: photo }} size={104} /> :
         <View style={{ width: 104, height: 104, backgroundColor: colors.blueLight, borderRadius: 32, alignItems: 'center', justifyContent: 'center' }}><Icon name="camera" size={34} color={colors.blue} /></View>}
       <Button tone="secondary" busy={busy} onPress={() => void takePhoto()} icon="camera">{photo ? 'Replace portrait' : Platform.OS === 'web' ? 'Choose your portrait' : 'Take your portrait'}</Button>
-      <Text style={s.small}>Required to join. Never used for face matching.</Text>
+      <Text style={s.small}>Optional. People see your initial if you skip it. Never used for face matching.</Text>
     </View>
     <Field label="Your name" value={name} onChangeText={setName} maxLength={80} placeholder="How should people remember you?" autoComplete="name" />
     <Field label="One-line introduction" value={role} onChangeText={setRole} maxLength={120} placeholder="What are you curious about?" />
-    <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: accepted }} accessibilityLabel="Allow event members to see your profile portrait"
+    <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: accepted }} accessibilityLabel="Allow event members to see your profile"
       onPress={() => setAccepted(!accepted)} style={[s.row, { alignItems: 'flex-start', paddingVertical: 7 }]}>
       <Icon name={accepted ? 'check-square' : 'square'} color={colors.blue} />
-      <Text style={[s.small, s.grow]}>Members of events I join can see this name and portrait. Recording and automatic recap sharing are enabled separately, once at event entry.</Text>
+      <Text style={[s.small, s.grow]}>Members of events I join can see this name and portrait (if added). Recording and automatic recap sharing are enabled separately, once at event entry.</Text>
     </Pressable>
-    <Button busy={busy} disabled={!accepted || !photo || !name.trim()} onPress={() => void perform(async () => {
+    <Button busy={busy} disabled={!accepted || !name.trim()} onPress={() => void perform(async () => {
       await app.saveProfile({ name: name.trim(), role: role.trim(), photoUrl: photo }); router.replace('/events');
     })}>Save your introduction</Button>
   </Page>;
