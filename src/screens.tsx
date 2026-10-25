@@ -423,25 +423,9 @@ export function ConversationScreen() {
       setFeedbackState(state => state.id === id ? settleConnectionFinish(state) : state);
     }
   };
-  // Live: each camera sees only the other person, so each phone reports the hand it
-  // saw. The connection finishes once both cameras saw a hand within a few seconds.
+  // Live: each camera sees only the other person, so one hand is the finish signal,
+  // and either phone seeing the other person's hand finishes (like the button).
   const liveHands = app.mode === 'live' && !harness;
-  const meId = app.snapshot?.me.id, otherId = conversation?.participants.find(p => p.id !== meId)?.id;
-  const [handRearm, setHandRearm] = useState(0);
-  const signalHand = async () => {
-    if (!app.client || connected || conversation?.status !== 'recording') return;
-    try {
-      const { both } = await app.client.signalHand(app.token, id);
-      if (both) { void finish('gesture'); return; }
-    } catch { /* keep watching; the button still works */ }
-    setTimeout(() => setHandRearm(n => n + 1), 1_200);
-  };
-  const myHandAt = meId ? conversation?.handSignals?.[meId] : undefined;
-  const theirHandAt = otherId ? conversation?.handSignals?.[otherId] : undefined;
-  useEffect(() => {
-    if (liveHands && myHandAt && theirHandAt && Math.abs(myHandAt - theirHandAt) <= 4_000) void finish('gesture');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [liveHands, myHandAt, theirHandAt]);
   const [leaveNotice, setLeaveNotice] = useState(false);
   const [releasedConversation, setReleasedConversation] = useState<string | null>(null);
   const blockedNavigation = useRef<(() => void) | null>(null);
@@ -595,19 +579,13 @@ export function ConversationScreen() {
       <View style={s.between}><Text style={s.heading}>Three fingers.{'\n'}You’re connected.</Text>
         <Text style={{ color: colors.blue, fontSize: 42, fontFamily: fonts.bold }}>3</Text></View>
       <GestureCapture active={focused && foreground} armed={armed} sessionId={id} source="phone"
-        handsRequired={liveHands ? 1 : 2} partnerName={`${firstName(other.name)}’s`} rearmKey={handRearm}
+        handsRequired={liveHands ? 1 : 2} partnerName={`${firstName(other.name)}’s`}
         style={{ height: 256, borderRadius: 18, overflow: 'hidden' }}
         onStatus={setCameraStatus} onSignal={signal => {
-          if (!armed || !signal.stable || signal.source !== 'phone') return;
-          if (liveHands && signal.hands >= 1) void signalHand();
-          else if (signal.hands === 2) void finish('gesture');
+          if (armed && signal.stable && signal.source === 'phone' && signal.hands >= (liveHands ? 1 : 2)) void finish('gesture');
         }} />
       <Text style={s.muted}>{liveHands
-        ? myHandAt && !theirHandAt
-          ? `You saw ${firstName(other.name)}’s hand. Now show yours to ${firstName(other.name)}’s camera: thumb, pointer and middle up.`
-          : theirHandAt && !myHandAt
-            ? `${firstName(other.name)}’s camera saw your hand. Point yours at ${firstName(other.name)}’s hand to finish.`
-            : `Both show one hand to the other’s camera: thumb, pointer and middle up, ring and little folded. Each phone sees the other person’s hand.`
+        ? `Show your hand to ${firstName(other.name)}’s camera, or have ${firstName(other.name)} show theirs to yours: thumb, pointer and middle up, ring and little folded. Either phone seeing the other person’s hand finishes.`
         : 'One hand each: thumb, pointer and middle up. Fold your ring and little fingers, then hold both hands in view for about a second.'}</Text>
       <Text style={s.small}>{finishing ? 'Gesture received. Safely closing the recording and confirming your connection…'
         : retrying ? 'Waiting for a confirmed connection. Detection is paused; use Retry finish if needed.'
