@@ -83,7 +83,7 @@ private struct HarnessView: View {
               .accessibilityLabel("Live frames from glasses camera")
           }
           Text("Real frames analyzed: \(glasses.frames)")
-          Text("Both people must show one hand each in the forward-facing glasses camera. Extend index, middle and ring; fold thumb and pinky. The wearer must bring their own hand into view too. Hold both signals for about one second.")
+          Text("Both people must show one hand each in the forward-facing glasses camera. Extend thumb, index and middle; fold ring and little fingers. The wearer must bring their own hand into view too. Hold both signals for about one second.")
             .font(.footnote)
           if model.isEventMode {
             Text(model.hasCaptureAuthority

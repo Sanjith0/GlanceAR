@@ -4,7 +4,7 @@ Meet in person. Keep the conversation, not just the contact. Glance is an iPhone
 
 ## Read this first
 
-- **Browser preview:** An interactive, fictional-data walkthrough. It does not access a microphone, call an AI model, or send a recap to anyone. Its sample recap is explicitly labelled. Only **LIVE Camera** opens the camera, for on-device face recognition of people you scan in that tab.
+- **Browser preview:** A fictional-data walkthrough with real, on-device camera and hand detection. LIVE Camera passes its video stream directly to the conversation screen; two matching hand gestures produce a brief green acknowledgment and open the shared chat. The browser does not record audio, call the transcription/recap service, or send a recap to another person; its recap is explicitly labeled as a sample.
 - **iPhone app:** React Native / Expo source with event enrollment, a required portrait, one permission per attendee at event entry, automatic capture after authorized profile pairing, two-hand finish detection, and a shared recap inside a two-person chat.
 - **Glasses version:** A separate SwiftUI iPhone app using Meta Wearables DAT 1.0.1. It supplies real glasses camera frames to the same hand detector and connects to the same conversation backend. Its audio comes from the iPhone microphone, not the glasses.
 - **Verification boundary:** Browser flows, JavaScript/TypeScript tests, local Convex operations and native-module discovery are testable here. The Swift apps have not been compiled, signed, installed or tested on an iPhone or Adventurer glasses. This is not an App Store release or a hardware-certified demo.
@@ -15,8 +15,8 @@ Meet in person. Keep the conversation, not just the contact. Glance is an iPhone
 2. Each real attendee enables Glance once for that event after reading the recording and automatic-sharing disclosure. A portrait or membership alone is not a grant. Native camera/microphone permissions are prepared at event entry, not in the middle of automatic capture.
 3. Open **LIVE Camera** from the event. Attendees who added an opt-in face scan get a box with their name and talking points drawn from both introductions. When your camera and theirs recognize each other within eight seconds, the conversation starts. Selecting a profile remains the fallback; always-on speech segmentation is not implemented. See [LIVE Camera](#live-camera) for platform limits.
 4. Capture starts without another approval or Start button when both event permissions, both foreground devices and the designated recorder are ready. Temporary WAV recording remains protected by short-lived native consent leases.
-5. Hold up the index, middle and ring fingers on both visible hands, with thumb and little finger folded, or choose **Finish & connect**. Native capture closes before the backend creates the connection. Two hand poses are not proof of two identities.
-6. The finish opens your shared chat directly. There is no separate “Make it mutual” or “Confirm connection” screen. Each participant sees the other person's portrait and the same recap; messaging can begin while the recap is prepared.
+5. Keep the live video window open. Each person shows one hand with thumb, pointer/index and middle extended, and ring/little folded; matching hands get green outlines. A continuous two-hand hold finishes once, with **Finish & connect** retained as an explicit fallback. Native capture closes before the backend creates the connection; two hand poses are not proof of two identities.
+6. A confirmed connection produces one short green acknowledgment while the video remains live, then opens your shared chat on the same route. There is no separate “Make it mutual” or “Confirm connection” screen. Each participant sees the same recap; messaging can begin while the recap is prepared.
 7. To withdraw without connecting, use **Stop without sharing**. To leave while local audio is pending, a navigation guard offers explicit discard; the already-created chat is preserved.
 
 The event disclosure explicitly authorizes **either participant's** finish gesture or button to connect and share. The gesture is a completion signal under both standing permissions, not a new identity credential or retroactive recording consent. Event revocation fences unfinished work; re-enabling cannot resurrect an old recording.
@@ -28,6 +28,7 @@ The event disclosure explicitly authorizes **either participant's** finish gestu
 | Mobile UI | Expo SDK 58, React Native, TypeScript, Expo Router |
 | Backend | Convex queries, mutations, actions, private file storage and scheduled cleanup |
 | iPhone hand detection | Apple Vision hand landmarks and a custom two-hand, three-finger stability rule |
+| Browser hand detection | MediaPipe Tasks Vision 0.10.32, pinned local Hand Landmarker v1, anonymous thumb/index/middle geometry and two-hand stability gate |
 | LIVE Camera (browser) | face-api / TensorFlow.js on-device detection and 128-number descriptors; reactive Convex face directory and mutual sightings |
 | iPhone audio | Local Expo module wrapping AVAudioRecorder, PCM16 mono WAV at 16 kHz, native monotonic watchdog |
 | Glasses camera | Meta Wearables DAT iOS 1.0.1, native SwiftUI capture client |
@@ -57,10 +58,12 @@ Use Node 24 and install the locked dependency set. The following command deliber
 
 ```sh
 npm ci
-EXPO_NO_DOTENV=1 EXPO_PUBLIC_CONVEX_URL= npx expo start --web
+EXPO_NO_DOTENV=1 EXPO_PUBLIC_CONVEX_URL= npm run web -- --clear
 ```
 
-Choose **Enter event**. The fictional attendees already have sample event permissions, so an encounter begins automatically. Choose **Simulate three-finger gesture** to open the shared chat immediately, send a message and use the Alex/Sam preview controls to see the other perspective. Return to the event for **Simulate next encounter**; each encounter creates a separate conversation segment.
+Choose **Enter event** and allow camera access. The fictional attendees already have sample event permissions, so an encounter begins automatically. Keep exactly two hands in the live window, one from each person, with thumb/pointer/middle up and the other fingers folded. Hold for about a second: both hands highlight, the screen turns green once, and the shared sample chat opens. **Finish & connect** is the fallback if a camera is unavailable; there is no simulated-gesture button.
+
+Send a message and use the Alex/Sam preview controls to see the other perspective. Return to the event for **Simulate next encounter**; only encounter creation is simulated, and each encounter has a separate chat. The native iPhone app needs a rebuilt development client for its updated hand detector and overlays.
 
 Preview state is memory-only and resets on reload. Alex, Sam, their AI-generated portraits and the recap are fictional sample content, not actual users or a transcription result.
 
@@ -70,7 +73,7 @@ From an enabled event, choose **LIVE Camera**. In the preview:
 
 1. Tick the consent box, then **Scan face** for Sam (or **Add a person**, up to five people, and scan someone who agreed). Hold one face in frame for a second; three consistent samples are taken.
 2. Point the camera at that person. They get a green box with their name and talking points; your own scan shows as **You**; anyone without a scan is **Not registered**.
-3. The other side's recognition of you is simulated about 1.5 seconds later, and the usual conversation screen opens with **Simulate three-finger gesture**.
+3. The other side's recognition of you is simulated about 1.5 seconds later. The conversation screen inherits the existing video stream and uses real two-hand gesture detection to finish; audio and the recap remain samples in preview mode.
 
 How it works:
 
@@ -79,6 +82,12 @@ How it works:
 - **Synced database (live backend):** `faceDirectory` is a reactive Convex query, so every open LIVE Camera updates the moment an attendee joins, enables, pauses, rescans or deletes. It returns only members who have Glance enabled and a face scan, and only to viewers who enabled Glance themselves.
 - **Mutual pairing:** each phone calls `reportSighting` about once a second while it steadily recognizes someone. When both directions arrive within `SIGHTING_WINDOW_MS`, one event-mode conversation is created; Convex serializes the race, so both phones open the same conversation. Fresh sightings are needed for every new encounter.
 - **Platform limits:** recognition runs in browsers (desktop, and phone browsers over HTTPS or localhost). The iPhone app shows a placeholder until the same model is ported natively; templates from a different model would never match. Browser participants still cannot record audio, so a real two-person live conversation needs the native recorder.
+
+## Live hand-gesture finish
+
+See [the implementation and verification guide](docs/LIVE-GESTURE.md) for camera transfer, gesture geometry, the green acknowledgment, model preparation, and what has and has not been tested. The hand changes do not modify face matching, account permissions, the backend schema, or the audio controller.
+
+The browser processes hand landmarks locally, requests video only, and never uploads or saves gesture frames. `npm ci`, `npm run web`, and `npm run build:web` prepare same-origin model assets; the hand model is pinned by SHA-256 and the runtime by exact dependency version. Camera/model failure shows an inline retry rather than substituting a simulated result.
 
 For a portable static preview, run `npm run build:web` and serve `dist`. The web-only adapters retain Expo Router's navigation engine but keep routes in the current document's hash, so an unknown hosting subdirectory does not become an application route.
 

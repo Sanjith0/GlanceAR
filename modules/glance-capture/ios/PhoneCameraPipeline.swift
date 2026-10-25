@@ -9,9 +9,10 @@ final class PhoneCameraPipeline: NSObject, AVCaptureVideoDataOutputSampleBufferD
   private let detector = HandSignalDetector()
   private var output: AVCaptureVideoDataOutput?
   private var enabled = false
+  private var signalArmed = true
   private var configured = false
   private var generation = 0
-  private var lastReportedHands = -1
+  private var cameraGeneration = 0
   private let onResult: (HandSignalResult, Int) -> Void
   private let onStatus: (String, Int) -> Void
 
@@ -26,9 +27,9 @@ final class PhoneCameraPipeline: NSObject, AVCaptureVideoDataOutputSampleBufferD
     queue.async { [weak self] in
       guard let self else { return }
       generation = newGeneration
+      cameraGeneration = newGeneration
       enabled = value
       detector.reset()
-      lastReportedHands = -1
       guard value else {
         if session.isRunning { session.stopRunning() }
         return
@@ -40,7 +41,7 @@ final class PhoneCameraPipeline: NSObject, AVCaptureVideoDataOutputSampleBufferD
         onStatus("Requesting iPhone camera permission", generation)
         AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
           self?.queue.async { [weak self] in
-            guard let self, enabled, generation == newGeneration else { return }
+            guard let self, enabled, cameraGeneration == newGeneration else { return }
             if granted { startIfEnabled() }
             else { onStatus("Camera permission denied. Enable it in iOS Settings.", generation) }
           }
@@ -51,13 +52,23 @@ final class PhoneCameraPipeline: NSObject, AVCaptureVideoDataOutputSampleBufferD
     }
   }
 
+  /// Hold state changes do not close or restart the visible camera.
+  func setSignalArmed(_ value: Bool, generation newGeneration: Int) {
+    queue.async { [weak self] in
+      guard let self else { return }
+      generation = newGeneration
+      signalArmed = value
+      detector.reset()
+    }
+  }
+
   private func startIfEnabled() {
     guard enabled else { return }
     do {
       if !configured { try configure() }
       session.startRunning()
       onStatus(session.isRunning
-        ? "Both participants: show one hand each. Extend index, middle and ring; fold thumb and pinky."
+        ? "Live camera. Extend thumb, index and middle on both hands; fold ring and little fingers."
         : "Camera did not start. Close other camera apps and try again.", generation)
     } catch {
       onStatus("Camera error: \(error.localizedDescription)", generation)
@@ -108,11 +119,10 @@ final class PhoneCameraPipeline: NSObject, AVCaptureVideoDataOutputSampleBufferD
                      from connection: AVCaptureConnection) {
     guard enabled, session.isRunning else { return }
     do {
-      guard let result = try detector.analyze(sampleBuffer) else { return }
-      if result.stable || result.hands != lastReportedHands {
-        lastReportedHands = result.hands
-        onResult(result, generation)
-      }
+      guard let result = try detector.analyze(sampleBuffer, armed: signalArmed) else { return }
+      // Every analyzed frame updates native landmarks, even when hand count
+      // stays unchanged. Analysis itself is bounded to approximately 10 Hz.
+      onResult(result, generation)
     } catch {
       enabled = false
       detector.reset()

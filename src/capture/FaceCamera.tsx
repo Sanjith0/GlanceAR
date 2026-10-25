@@ -4,6 +4,7 @@ import { Icon } from '../components';
 import { colors, fonts } from '../theme';
 import { projectBox, type FaceBox } from '../face';
 import { cropFace, detectFaces, faceEngineSupported, loadFaceEngine, type DetectedFace } from './faceEngine';
+import { acquireLiveCameraStream, type LiveCameraLease } from './liveCameraStream';
 
 export type FaceFrame = { faces: DetectedFace[]; width: number; height: number; crop: (box: FaceBox) => string };
 export type FaceOverlay = {
@@ -12,6 +13,7 @@ export type FaceOverlay = {
 };
 export type FaceCameraProps = {
   active: boolean;
+  scopeId?: string;
   overlays: FaceOverlay[];
   onFrame: (frame: FaceFrame) => void;
   style?: StyleProp<ViewStyle>;
@@ -24,8 +26,8 @@ const tones = {
   scan: { border: '#FFD166', fill: 'rgba(11,27,58,0.85)' },
 };
 
-/** Video only (never audio). The stream stops whenever inactive, hidden, or unmounted. */
-export default function FaceCamera({ active, overlays, onFrame, style }: FaceCameraProps) {
+/** Video only. Only an explicit, bounded conversation handoff survives unmount. */
+export default function FaceCamera({ active, scopeId = 'live:camera', overlays, onFrame, style }: FaceCameraProps) {
   const video = useRef<HTMLVideoElement | null>(null);
   const latestFrame = useRef(onFrame);
   useLayoutEffect(() => { latestFrame.current = onFrame; });
@@ -40,17 +42,29 @@ export default function FaceCamera({ active, overlays, onFrame, style }: FaceCam
   useEffect(() => {
     if (typeof document === 'undefined') return;
     const update = () => setVisible(document.visibilityState === 'visible');
+    const hide = () => setVisible(false);
     document.addEventListener('visibilitychange', update);
-    return () => document.removeEventListener('visibilitychange', update);
+    window.addEventListener('pagehide', hide);
+    window.addEventListener('pageshow', update);
+    return () => {
+      document.removeEventListener('visibilitychange', update);
+      window.removeEventListener('pagehide', hide);
+      window.removeEventListener('pageshow', update);
+    };
   }, []);
 
   const supported = faceEngineSupported();
   useEffect(() => {
     if (!active || !visible || !supported) return;
     const element = video.current;
-    let stopped = false, stream: MediaStream | null = null, timer: ReturnType<typeof setTimeout> | undefined;
+    let stopped = false, lease: LiveCameraLease | null = null, timer: ReturnType<typeof setTimeout> | undefined;
+    const controller = new AbortController();
     const loop = async () => {
       if (stopped || !element) return;
+      if (!lease?.stream.getVideoTracks().some(track => track.readyState === 'live')) {
+        setStatus('Camera stopped. Reopen LIVE Camera to continue.');
+        return;
+      }
       try {
         if (element.readyState >= 2 && element.videoWidth) {
           const faces = await detectFaces(element);
@@ -68,14 +82,12 @@ export default function FaceCamera({ active, overlays, onFrame, style }: FaceCam
     (async () => {
       try {
         if (!element) return;
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: false, video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } },
-        });
-        if (stopped) { stream.getTracks().forEach(track => track.stop()); return; }
-        element.srcObject = stream;
+        lease = await acquireLiveCameraStream(facing, scopeId, controller.signal);
+        if (stopped) { lease.release(); return; }
+        element.srcObject = lease.stream;
         await element.play();
-        // Laptop webcams rarely report a facing mode; treat anything but the rear camera as a mirror.
-        setMirrored(stream.getVideoTracks()[0]?.getSettings().facingMode !== 'environment');
+        if (stopped) return;
+        setMirrored(lease.mirrored);
         void navigator.mediaDevices.enumerateDevices()
           .then(devices => { if (!stopped) setCameras(devices.filter(d => d.kind === 'videoinput').length); })
           .catch(() => {});
@@ -86,6 +98,9 @@ export default function FaceCamera({ active, overlays, onFrame, style }: FaceCam
         void loop();
       } catch (error) {
         if (stopped) return;
+        lease?.release();
+        lease = null;
+        if (element) element.srcObject = null;
         const name = error instanceof Error ? error.name : '';
         setStatus(name === 'NotAllowedError' ? 'Camera permission is off. Allow camera access for this site and reopen LIVE Camera.'
           : name === 'NotFoundError' ? 'No camera was found on this device.'
@@ -95,11 +110,12 @@ export default function FaceCamera({ active, overlays, onFrame, style }: FaceCam
     return () => {
       stopped = true;
       clearTimeout(timer);
-      stream?.getTracks().forEach(track => track.stop());
+      controller.abort();
+      lease?.release();
       if (element) element.srcObject = null;
       setStatus('Starting camera…');
     };
-  }, [active, visible, supported, facing]);
+  }, [active, visible, supported, facing, scopeId]);
 
   const shown = !active || !visible ? 'Camera off'
     : !supported ? 'This browser can’t open the camera here. Use a current browser over HTTPS or localhost.' : status;

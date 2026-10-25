@@ -10,24 +10,28 @@ final class HandPoseGeometryTests: XCTestCase {
     [
       .wrist: CGPoint(x: 0.50, y: 0.10),
       .thumbCMC: CGPoint(x: 0.35, y: 0.15), .thumbMP: CGPoint(x: 0.25, y: 0.27),
-      .thumbIP: CGPoint(x: 0.41, y: 0.26), .thumbTip: CGPoint(x: 0.55, y: 0.28),
+      .thumbIP: CGPoint(x: 0.15, y: 0.34), .thumbTip: CGPoint(x: 0.05, y: 0.40),
       .indexMCP: CGPoint(x: 0.35, y: 0.38), .indexPIP: CGPoint(x: 0.34, y: 0.58),
       .indexDIP: CGPoint(x: 0.34, y: 0.72), .indexTip: CGPoint(x: 0.34, y: 0.86),
       .middleMCP: CGPoint(x: 0.50, y: 0.40), .middlePIP: CGPoint(x: 0.50, y: 0.62),
       .middleDIP: CGPoint(x: 0.50, y: 0.79), .middleTip: CGPoint(x: 0.50, y: 0.96),
-      .ringMCP: CGPoint(x: 0.62, y: 0.38), .ringPIP: CGPoint(x: 0.63, y: 0.58),
-      .ringDIP: CGPoint(x: 0.64, y: 0.73), .ringTip: CGPoint(x: 0.65, y: 0.87),
+      .ringMCP: CGPoint(x: 0.62, y: 0.38), .ringPIP: CGPoint(x: 0.65, y: 0.54),
+      .ringDIP: CGPoint(x: 0.65, y: 0.39), .ringTip: CGPoint(x: 0.59, y: 0.29),
       .littleMCP: CGPoint(x: 0.72, y: 0.32), .littlePIP: CGPoint(x: 0.77, y: 0.46),
       .littleDIP: CGPoint(x: 0.75, y: 0.32), .littleTip: CGPoint(x: 0.69, y: 0.25)
     ]
   }
 
-  func testThreeExtendedWithFoldedThumbAndPinky() {
+  func testThumbIndexMiddleWithFoldedRingAndLittle() {
     XCTAssertTrue(HandPoseGeometry.isThreeFingerSignal(signal))
     let mirror = signal.mapValues { CGPoint(x: 1 - $0.x, y: $0.y) }
     XCTAssertTrue(HandPoseGeometry.isThreeFingerSignal(mirror))
     let rotated = signal.mapValues { CGPoint(x: 1 - $0.y, y: $0.x) }
     XCTAssertTrue(HandPoseGeometry.isThreeFingerSignal(rotated))
+    let shifted = signal.mapValues { CGPoint(x: $0.x + 0.1, y: $0.y - 0.05) }
+    XCTAssertTrue(HandPoseGeometry.isThreeFingerSignal(shifted))
+    let scaled = signal.mapValues { CGPoint(x: $0.x * 0.5, y: $0.y * 0.5) }
+    XCTAssertTrue(HandPoseGeometry.isThreeFingerSignal(scaled))
   }
 
   func testOpenPinkyIsNotSignal() {
@@ -38,18 +42,76 @@ final class HandPoseGeometryTests: XCTestCase {
     XCTAssertFalse(HandPoseGeometry.isThreeFingerSignal(open))
   }
 
-  func testOpenThumbIsNotSignal() {
+  func testFoldedThumbAndOldIndexMiddleRingPoseAreNotSignals() {
+    var folded = signal
+    folded[.thumbIP] = CGPoint(x: 0.41, y: 0.26)
+    folded[.thumbTip] = CGPoint(x: 0.55, y: 0.28)
+    XCTAssertFalse(HandPoseGeometry.isThreeFingerSignal(folded))
+    folded[.ringPIP] = CGPoint(x: 0.63, y: 0.58)
+    folded[.ringDIP] = CGPoint(x: 0.64, y: 0.73)
+    folded[.ringTip] = CGPoint(x: 0.65, y: 0.87)
+    XCTAssertFalse(HandPoseGeometry.isThreeFingerSignal(folded))
+  }
+
+  func testOpenRingIsNotSignal() {
     var open = signal
-    open[.thumbCMC] = CGPoint(x: 0.40, y: 0.22)
-    open[.thumbMP] = CGPoint(x: 0.30, y: 0.28)
-    open[.thumbIP] = CGPoint(x: 0.20, y: 0.34)
-    open[.thumbTip] = CGPoint(x: 0.10, y: 0.40)
+    open[.ringPIP] = CGPoint(x: 0.63, y: 0.58)
+    open[.ringDIP] = CGPoint(x: 0.64, y: 0.73)
+    open[.ringTip] = CGPoint(x: 0.65, y: 0.87)
     XCTAssertFalse(HandPoseGeometry.isThreeFingerSignal(open))
+  }
+
+  func testStraightLoweredRingAndLittleAreNotFolded() {
+    var lowered = signal
+    lowered[.ringPIP] = CGPoint(x: 0.62, y: 0.30)
+    lowered[.ringDIP] = CGPoint(x: 0.62, y: 0.22)
+    lowered[.ringTip] = CGPoint(x: 0.62, y: 0.14)
+    XCTAssertFalse(HandPoseGeometry.isThreeFingerSignal(lowered))
+    lowered = signal
+    lowered[.littlePIP] = CGPoint(x: 0.72, y: 0.24)
+    lowered[.littleDIP] = CGPoint(x: 0.72, y: 0.16)
+    lowered[.littleTip] = CGPoint(x: 0.72, y: 0.08)
+    XCTAssertFalse(HandPoseGeometry.isThreeFingerSignal(lowered))
+  }
+
+  func testBentIndexIsNotSignal() {
+    var bent = signal
+    bent[.indexDIP] = CGPoint(x: 0.34, y: 0.40)
+    bent[.indexTip] = CGPoint(x: 0.40, y: 0.28)
+    XCTAssertFalse(HandPoseGeometry.isThreeFingerSignal(bent))
+  }
+
+  func testPortraitAndLandscapeMetricCorrection() {
+    for size in [CGSize(width: 480, height: 640), CGSize(width: 640, height: 480)] {
+      let normalized = signal.mapValues {
+        CGPoint(x: $0.x * size.height / size.width, y: $0.y)
+      }
+      let metric = HandPoseGeometry.metricPoints(normalized, imageSize: size)
+      XCTAssertTrue(HandPoseGeometry.isThreeFingerSignal(metric))
+    }
+    XCTAssertTrue(HandPoseGeometry.metricPoints(signal, imageSize: .zero).isEmpty)
+  }
+
+  func testOverlayMirroringAspectFillAndAspectFit() {
+    let image = CGSize(width: 480, height: 640)
+    let view = CGSize(width: 300, height: 300)
+    let point = CGPoint(x: 0.25, y: 0.75)
+    let mirrored = HandOverlayGeometry.displayPoint(point, imageSize: image,
+      viewSize: view, mirrored: true, aspectFill: true)
+    XCTAssertEqual(mirrored.x, 225, accuracy: 0.001)
+    XCTAssertEqual(mirrored.y, 50, accuracy: 0.001)
+    let fitted = HandOverlayGeometry.displayPoint(point, imageSize: image,
+      viewSize: view, mirrored: false, aspectFill: false)
+    XCTAssertEqual(fitted.x, 93.75, accuracy: 0.001)
+    XCTAssertEqual(fitted.y, 75, accuracy: 0.001)
   }
 
   func testMissingJointIsRejected() {
     var incomplete = signal
     incomplete.removeValue(forKey: .thumbTip)
+    XCTAssertFalse(HandPoseGeometry.isThreeFingerSignal(incomplete))
+    incomplete = signal
+    incomplete[.thumbTip] = CGPoint(x: CGFloat.nan, y: 0.4)
     XCTAssertFalse(HandPoseGeometry.isThreeFingerSignal(incomplete))
   }
 

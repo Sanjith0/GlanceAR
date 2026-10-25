@@ -15,7 +15,7 @@ export type FaceOverlay = {
  * model, so a native detector must use the same model or it would never match.
  */
 export default function FaceCamera({ style }: {
-  active: boolean; overlays: FaceOverlay[]; onFrame: (frame: FaceFrame) => void; style?: StyleProp<ViewStyle>;
+  active: boolean; scopeId?: string; overlays: FaceOverlay[]; onFrame: (frame: FaceFrame) => void; style?: StyleProp<ViewStyle>;
 }) {
   return <View style={[s.soft, { alignItems: 'center', padding: 28 }, style]}>
     <Icon name="camera-off" size={28} color={colors.blue} />

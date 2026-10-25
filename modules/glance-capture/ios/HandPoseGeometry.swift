@@ -19,7 +19,10 @@ enum HandPoseGeometry {
   }
 
   static func isThreeFingerSignal(_ points: [HandJoint: CGPoint]) -> Bool {
-    guard HandJoint.allCases.allSatisfy({ points[$0] != nil }),
+    guard HandJoint.allCases.allSatisfy({
+      guard let point = points[$0] else { return false }
+      return point.x.isFinite && point.y.isFinite
+    }),
       let wrist = points[.wrist], let middle = points[.middleMCP],
       let index = points[.indexMCP], let little = points[.littleMCP],
       let thumbTip = points[.thumbTip], let thumbIP = points[.thumbIP],
@@ -40,26 +43,39 @@ enum HandPoseGeometry {
     }
 
     guard extended(.indexMCP, .indexPIP, .indexDIP, .indexTip),
-      extended(.middleMCP, .middlePIP, .middleDIP, .middleTip),
-      extended(.ringMCP, .ringPIP, .ringDIP, .ringTip),
-      let pinkyPIP = points[.littlePIP], let pinkyDIP = points[.littleDIP],
-      let pinkyTip = points[.littleTip]
+      extended(.middleMCP, .middlePIP, .middleDIP, .middleTip)
     else { return false }
 
-    // A straight, lowered pinky is not "folded"; require a bent joint AND a
-    // fingertip that has returned toward the palm.
-    let pinkyFolded = (angle(little, pinkyPIP, pinkyDIP) < 135
-      || angle(pinkyPIP, pinkyDIP, pinkyTip) < 135)
-      && distance(pinkyTip, wrist) < distance(pinkyPIP, wrist) + 0.12 * palmLength
+    func folded(_ mcp: HandJoint, _ pip: HandJoint,
+                _ dip: HandJoint, _ tip: HandJoint) -> Bool {
+      guard let a = points[mcp], let b = points[pip],
+        let c = points[dip], let d = points[tip] else { return false }
+      // A straight, lowered finger is not folded. Require both a bent joint
+      // and a fingertip that has returned toward the palm.
+      return (angle(a, b, c) < 135 || angle(b, c, d) < 135)
+        && distance(d, wrist) < distance(b, wrist) + 0.12 * palmLength
+    }
 
-    // Require a folded thumb near the palm, not an open four-finger signal.
-    let palmCenter = CGPoint(x: (wrist.x + middle.x) / 2,
-                             y: (wrist.y + middle.y) / 2)
-    let thumbFolded = (angle(thumbCMC, thumbMP, thumbIP) < 155
-      || angle(thumbMP, thumbIP, thumbTip) < 150)
-      && distance(thumbTip, palmCenter) < 1.1 * max(palmLength, palmWidth)
-      && distance(thumbTip, little) < 1.25 * palmWidth
-    return pinkyFolded && thumbFolded
+    // The thumb is splayed away from the index, not tucked across the palm.
+    // Its basal joint naturally bends more than a long finger's knuckles.
+    let thumbExtended = angle(thumbCMC, thumbMP, thumbIP) > 140
+      && angle(thumbMP, thumbIP, thumbTip) > 150
+      && distance(thumbTip, thumbCMC) > 0.75 * palmLength
+      && distance(thumbTip, index) > 0.55 * palmWidth
+      && distance(thumbTip, wrist) > distance(thumbIP, wrist) + 0.10 * palmLength
+    return thumbExtended
+      && folded(.ringMCP, .ringPIP, .ringDIP, .ringTip)
+      && folded(.littleMCP, .littlePIP, .littleDIP, .littleTip)
+  }
+
+  /// Vision normalizes each image axis separately. Restore its pixel aspect
+  /// before measuring angles/distances; display landmarks remain normalized.
+  static func metricPoints(_ points: [HandJoint: CGPoint],
+                           imageSize: CGSize) -> [HandJoint: CGPoint] {
+    guard imageSize.width > 0, imageSize.height > 0,
+      imageSize.width.isFinite, imageSize.height.isFinite else { return [:] }
+    let aspect = imageSize.width / imageSize.height
+    return points.mapValues { CGPoint(x: $0.x * aspect, y: $0.y) }
   }
 
   private static func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat {
@@ -72,6 +88,47 @@ enum HandPoseGeometry {
     let denominator = hypot(u.x, u.y) * hypot(v.x, v.y)
     guard denominator > 0.000001 else { return 0 }
     return acos(max(-1, min(1, (u.x * v.x + u.y * v.y) / denominator))) * 180 / .pi
+  }
+}
+
+/// Transient, confidence-filtered landmarks only. Never serialized or stored.
+struct HandPoseOverlay {
+  let points: [HandJoint: CGPoint]
+  let matches: Bool
+}
+
+enum HandOverlayGeometry {
+  static let chains: [[HandJoint]] = [
+    [.wrist, .thumbCMC, .thumbMP, .thumbIP, .thumbTip],
+    [.wrist, .indexMCP, .indexPIP, .indexDIP, .indexTip],
+    [.wrist, .middleMCP, .middlePIP, .middleDIP, .middleTip],
+    [.wrist, .ringMCP, .ringPIP, .ringDIP, .ringTip],
+    [.wrist, .littleMCP, .littlePIP, .littleDIP, .littleTip]
+  ]
+  static let signalTips: Set<HandJoint> = [.thumbTip, .indexTip, .middleTip]
+
+  /// Vision's origin is lower-left. Phone pixels are already portrait-rotated;
+  /// only the display is mirrored. Glasses use unmirrored aspect-fit instead.
+  static func displayPoint(_ point: CGPoint, imageSize: CGSize,
+                           viewSize: CGSize, mirrored: Bool,
+                           aspectFill: Bool) -> CGPoint {
+    guard imageSize.width > 0, imageSize.height > 0 else { return .zero }
+    let sx = viewSize.width / imageSize.width
+    let sy = viewSize.height / imageSize.height
+    let scale = aspectFill ? max(sx, sy) : min(sx, sy)
+    let width = imageSize.width * scale
+    let height = imageSize.height * scale
+    return CGPoint(x: (viewSize.width - width) / 2 + (mirrored ? 1 - point.x : point.x) * width,
+                   y: (viewSize.height - height) / 2 + (1 - point.y) * height)
+  }
+
+  static func palmRing(_ points: [HandJoint: CGPoint]) -> CGRect? {
+    guard let wrist = points[.wrist], let middle = points[.middleMCP],
+      let index = points[.indexMCP], let little = points[.littleMCP] else { return nil }
+    let center = CGPoint(x: (wrist.x + middle.x) / 2, y: (wrist.y + middle.y) / 2)
+    let radius = max(18, hypot(index.x - little.x, index.y - little.y) * 0.68)
+    return CGRect(x: center.x - radius, y: center.y - radius,
+                  width: radius * 2, height: radius * 2)
   }
 }
 

@@ -38,7 +38,7 @@ public final class GlanceCaptureModule: Module {
       [
         "phoneCamera": true,
         "glassesCamera": false,
-        "detector": "Apple Vision: exactly two simultaneous hands, each with index/middle/ring extended and thumb/pinky folded",
+        "detector": "Apple Vision: exactly two simultaneous hands, each with thumb/index/middle extended and ring/little folded",
         "reason": "Glasses DAT integration is a separate native harness, not linked to this Expo build."
       ]
     }
@@ -47,6 +47,12 @@ public final class GlanceCaptureModule: Module {
       Events("onSignal", "onStatus")
       Prop("active") { (view: GlanceCaptureView, active: Bool) in
         view.setActive(active)
+      }
+      Prop("armed") { (view: GlanceCaptureView, armed: Bool) in
+        view.setSignalArmed(armed)
+      }
+      Prop("sessionId") { (view: GlanceCaptureView, sessionID: String) in
+        view.setSessionID(sessionID)
       }
       Prop("source") { (view: GlanceCaptureView, source: String) in
         view.setSource(source)

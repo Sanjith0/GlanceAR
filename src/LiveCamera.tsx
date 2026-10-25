@@ -6,6 +6,7 @@ import { colors, s } from './theme';
 import { useFaceDirectory, useGlance } from './state';
 import { DemoBanner, GlobalStatus, useOperation, useScreenFocused } from './screens';
 import FaceCamera, { type FaceFrame, type FaceOverlay } from './capture/FaceCamera';
+import { cancelLiveCameraHandoff, prepareLiveCameraHandoff } from './capture/liveCameraStream';
 import { consistentSamples, faceDistance, matchDescriptor, MATCH_THRESHOLD, RecognitionTracker, scanProblem } from './face';
 import { talkingPoints } from './talkingPoints';
 import { DEMO_FACE_LIMIT, FACE_SCAN_SAMPLES, SIGHTING_REPORT_INTERVAL_MS } from './domain';
@@ -29,15 +30,32 @@ export function LiveCameraScreen() {
   const { directory, error: syncError } = useFaceDirectory(id);
   const templates = directory?.templates ?? [];
   const active = app.snapshot?.conversations.find(c => c.eventId === id && c.consentMode === 'event' && ['consent', 'recording'].includes(c.status));
+  const [notice, setNotice] = useState('');
 
-  // Either phone may complete the mutual match; both see the new conversation in their
-  // snapshot. Return to the event, which opens it, so Back from the chat lands there.
+  // Move directly into the conversation, retaining only this stream for this exact
+  // destination. Audio ownership starts there and never remounts during finish/upload.
   const leaving = useRef(false);
+  useFocusEffect(useCallback(() => { leaving.current = false; }, []));
   useEffect(() => {
     if (!focused || !active || leaving.current) return;
     leaving.current = true;
-    if (router.canGoBack()) router.back(); else router.replace(`/event/${id}`);
-  }, [focused, active, id]);
+    const destination = `conversation:${active.id}`;
+    prepareLiveCameraHandoff(destination);
+    let cancelled = false, dispatched = false;
+    void Promise.resolve().then(() => {
+      if (cancelled) return;
+      router.replace(`/conversation/${active.id}`);
+      dispatched = true;
+    }).catch(error => {
+      cancelLiveCameraHandoff(destination);
+      leaving.current = false;
+      if (!cancelled) setNotice(error instanceof Error ? error.message : 'Could not open the conversation.');
+    });
+    return () => {
+      cancelled = true;
+      if (!dispatched) { cancelLiveCameraHandoff(destination); leaving.current = false; }
+    };
+  }, [focused, active]);
 
   const tracker = useRef(new RecognitionTracker());
   const reports = useRef(new Map<string, number>());
@@ -46,7 +64,6 @@ export function LiveCameraScreen() {
   const [overlays, setOverlays] = useState<FaceOverlay[]>([]);
   const [pairing, setPairing] = useState<Record<string, string>>({});
   const [scanView, setScanView] = useState<{ name: string; count: number; hint: string } | null>(null);
-  const [notice, setNotice] = useState('');
   const [consented, setConsented] = useState(false);
   const [newPerson, setNewPerson] = useState<{ name: string; role: string } | null>(null);
 
@@ -130,7 +147,7 @@ export function LiveCameraScreen() {
   };
 
   const recognizable = templates.filter(t => t.profileId !== me?.id && people.has(t.profileId)).length;
-  const cameraActive = focused && enabled && !active && Platform.OS === 'web';
+  const cameraActive = focused && enabled && Platform.OS === 'web';
   return <Page back title="LIVE Camera">
     <DemoBanner /><GlobalStatus />
     {!event ? !app.loading && <Empty icon="calendar" title="Event unavailable" text="Go back to your events, or join with an invitation code." />
@@ -141,7 +158,7 @@ export function LiveCameraScreen() {
       </View> : <>
         <View style={{ gap: 8 }}><Text style={s.title}>Who’s here?</Text>
           <Text style={s.muted}>Point your camera at the room. People with a face scan get a box with their name and something to talk about. Once you recognize each other, your conversation starts.</Text></View>
-        <FaceCamera active={cameraActive} overlays={overlays} onFrame={onFrame} />
+        <FaceCamera active={cameraActive} scopeId={`live:${id}`} overlays={overlays} onFrame={onFrame} />
         {scanView && <View style={[s.soft, s.between]}>
           <View style={[s.grow, { gap: 2 }]}><Text style={s.label}>{`Scanning ${scanView.name} · ${scanView.count}/${FACE_SCAN_SAMPLES}`}</Text>
             <Text style={s.small}>{scanView.hint}</Text></View>

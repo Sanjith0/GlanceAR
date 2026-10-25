@@ -47,5 +47,5 @@ qa/
 /ios
 /android
 
-# face-api weights, copied from node_modules by scripts/copy-face-models.mjs
+# Prepared camera model/runtime assets; reproducible with npm run prepare:models
 public/models/

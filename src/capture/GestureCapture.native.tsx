@@ -7,6 +7,8 @@ export type CaptureSource = 'phone' | 'glasses';
 export type GestureSignal = { hands: number; stable: boolean; source: CaptureSource };
 export type GestureCaptureProps = {
   active: boolean;
+  armed?: boolean;
+  sessionId?: string;
   source?: CaptureSource;
   onSignal: (event: GestureSignal) => void;
   onStatus?: (message: string) => void;
@@ -15,9 +17,11 @@ export type GestureCaptureProps = {
 
 type NativeProps = {
   active: boolean;
+  armed: boolean;
+  sessionId: string;
   source: CaptureSource;
   style?: StyleProp<ViewStyle>;
-  onSignal: (event: { nativeEvent: GestureSignal }) => void;
+  onSignal: (event: { nativeEvent: GestureSignal & { sessionId: string } }) => void;
   onStatus: (event: { nativeEvent: { message: string } }) => void;
 };
 
@@ -55,12 +59,15 @@ if (Platform.OS === 'ios' && captureModule) {
 
 export default function GestureCapture({
   active,
+  armed = true,
+  sessionId = '',
   source = 'phone',
   onSignal,
   onStatus,
   style,
 }: GestureCaptureProps) {
   const [status, setStatus] = useState('Camera off');
+  const [hands, setHands] = useState(0);
   const unavailable = source === 'glasses'
     ? 'Glasses capture is not connected to this Expo app. The separate DAT iPhone harness tests real glasses frames. “Meta Adventurer” support is unverified.'
     : Platform.OS !== 'ios'
@@ -87,10 +94,19 @@ export default function GestureCapture({
       <NativeCapture
         style={StyleSheet.absoluteFill}
         active={active}
+        armed={armed}
+        sessionId={sessionId}
         source={source}
         onSignal={({ nativeEvent }) => {
           // Native generation guards also reject late frames after disarming.
-          if (active && nativeEvent.source === source) onSignal(nativeEvent);
+          if (active && nativeEvent.source === source && nativeEvent.sessionId === sessionId) {
+            setHands(nativeEvent.hands);
+            if (armed) onSignal({
+              hands: nativeEvent.hands,
+              stable: nativeEvent.stable,
+              source: nativeEvent.source,
+            });
+          }
         }}
         onStatus={({ nativeEvent }) => {
           setStatus(nativeEvent.message);
@@ -99,7 +115,10 @@ export default function GestureCapture({
       />
       <View pointerEvents="none" style={styles.caption}>
         <Text style={styles.captionText}>{active ? status : 'Camera off'}</Text>
-        {active && <Text style={styles.hint}>Both people: show one hand each, palms toward camera. Hold both three-finger signals for about a second.</Text>}
+        {active && <Text style={styles.hint}>
+          {hands > 2 ? 'Extra hand in view. Show exactly two hands. ' : `${hands}/2 hands in view. `}
+          Both people: thumb, index and middle up; ring and little folded. Hold both for about a second.
+        </Text>}
       </View>
     </View>
   );

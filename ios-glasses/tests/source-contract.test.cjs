@@ -11,6 +11,57 @@ const policies = fs.readFileSync(path.join(root, 'Sources/CapturePolicies.swift'
 const fixtures = fs.readFileSync(path.join(root, 'Tests/CaptureContractTests.swift'), 'utf8');
 const between = (start, end) => model.slice(model.indexOf(start), model.indexOf(end));
 
+test('native three-finger finish means thumb/index/middle and folded ring/little', () => {
+  const geometry = fs.readFileSync(path.join(root, '../modules/glance-capture/ios/HandPoseGeometry.swift'), 'utf8');
+  const detector = fs.readFileSync(path.join(root, '../modules/glance-capture/ios/HandSignalDetector.swift'), 'utf8');
+  const tests = fs.readFileSync(path.join(root, '../modules/glance-capture/ios/Tests/HandPoseGeometryTests.swift'), 'utf8');
+  assert(geometry.includes('let thumbExtended'));
+  assert(geometry.includes('folded(.ringMCP, .ringPIP, .ringDIP, .ringTip)'));
+  assert(geometry.includes('folded(.littleMCP, .littlePIP, .littleDIP, .littleTip)'));
+  assert(!geometry.includes('extended(.ringMCP'));
+  assert(detector.includes('request.maximumHandCount = 3'));
+  assert(detector.includes('point.confidence >= 0.55'));
+  assert(detector.includes('HandPoseGeometry.metricPoints(points, imageSize: imageSize)'));
+  assert(tests.includes('testFoldedThumbAndOldIndexMiddleRingPoseAreNotSignals'));
+  assert(tests.includes('testStraightLoweredRingAndLittleAreNotFolded'));
+  assert(tests.includes('testOverlayMirroringAspectFillAndAspectFit'));
+});
+
+test('native live overlays use real analyzed landmarks without changing the public signal', () => {
+  const view = fs.readFileSync(path.join(root, '../modules/glance-capture/ios/GlanceCaptureView.swift'), 'utf8');
+  const pipeline = fs.readFileSync(path.join(root, '../modules/glance-capture/ios/PhoneCameraPipeline.swift'), 'utf8');
+  assert(view.includes('self.latestResult = result'));
+  assert(view.includes('HandOverlayGeometry.displayPoint'));
+  assert(view.includes('HandOverlayGeometry.palmRing(points)'));
+  assert(view.includes('mirrored: true, aspectFill: true'));
+  assert(view.includes('self.generation == generation, self.isArmed'));
+  assert(view.includes('.now() + 0.35'));
+  assert(view.includes('self.onSignal(["hands": result.hands, "stable": result.stable,'));
+  assert(view.includes('"source": "phone", "sessionId": self.sessionID'));
+  assert(!pipeline.includes('lastReportedHands'));
+  assert(pipeline.includes('onResult(result, generation)'));
+});
+
+test('native signal arming resets hold without closing camera or invalidating permission lifecycle', () => {
+  const view = fs.readFileSync(path.join(root, '../modules/glance-capture/ios/GlanceCaptureView.swift'), 'utf8');
+  const pipeline = fs.readFileSync(path.join(root, '../modules/glance-capture/ios/PhoneCameraPipeline.swift'), 'utf8');
+  const detector = fs.readFileSync(path.join(root, '../modules/glance-capture/ios/HandSignalDetector.swift'), 'utf8');
+  const wrapper = fs.readFileSync(path.join(root, '../src/capture/GestureCapture.native.tsx'), 'utf8');
+  const arming = pipeline.slice(pipeline.indexOf('func setSignalArmed('), pipeline.indexOf('private func startIfEnabled('));
+  assert(arming.includes('detector.reset()'));
+  assert(!arming.includes('stopRunning'));
+  assert(!arming.includes('startRunning'));
+  assert(!arming.includes('cameraGeneration ='));
+  assert(pipeline.includes('enabled, cameraGeneration == newGeneration'));
+  assert(detector.includes('if !armed { gate.reset() }'));
+  assert(detector.includes('stable: armed && gate.consume'));
+  assert(view.includes('func setSessionID('));
+  assert(wrapper.includes('armed = true'));
+  assert(wrapper.includes('if (armed) onSignal({'));
+  assert(wrapper.includes('nativeEvent.sessionId === sessionId'));
+  assert(wrapper.includes('active={active}'));
+});
+
 test('startup drains old polling and enables renewal only after native recording', () => {
   const code = between('private func runStart(', 'private func deferAutomaticStart(');
   assert(code.indexOf('await priorPolling?.value') < code.indexOf('startupPresenceTicket(context)'));
