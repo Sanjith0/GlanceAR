@@ -15,7 +15,7 @@ Checked on October 24, 2026, in a Linux environment using Node 24.22.1. This rec
 | Expo package compatibility | Passed | Installed dependencies match the selected Expo SDK |
 | Expo Apple autolinking | Passed | Both local native modules are discovered; this is not compilation |
 | Browser walkthrough | Passed | Real clicks in Chromium at mobile and desktop sizes |
-| Updated private hosted preview | Pending final deployment check | The previous revision passed; the revised event-entry-to-chat flow must be checked on the returned deployment URL |
+| Updated private hosted preview | Passed | Same app updated in place; all 39 export files uploaded, then fresh-context hosted flow checks passed |
 | Native Swift source checks | Passed within scope | Grammar, configuration, API-signature inspection and static contracts only |
 | Live Meta transcription | Passed within scope | Authenticated API call with an 18-second synthetic WAV |
 | Live Meta structured summary | Passed within scope | Actual ASR output summarized and accepted by the application validator |
@@ -59,8 +59,8 @@ The browser preview was exercised through its visible controls, not by directly 
 - **Error handling:** Switching to an unconfigured backend gives an explicit error. The error can be dismissed without losing the sample walkthrough.
 - **Navigation and layout:** Events, connections, profile, enrollment, event detail, conversation and recap were exercised. Browser Back and Forward between profile and enrollment passed. The chat was resized between 375px, 320 × 568 and 1440 × 360, preserving header/composer bounds.
 - **Visual evidence:** Home, automatic recording, event disclosure, shared chat, empty event, profile, enrollment and short-window screenshots were inspected. The initial empty chat stays at the top; real message activity scrolls to the conversation. No horizontal overflow, missing portraits or uncaught browser page errors were observed.
-- **Accessibility checks:** Decorative icon glyphs are hidden from accessibility output, tab labels have explicit names, disabled controls expose disabled semantics, and the measured home-screen text contrast ratios were at least 4.55:1. This is a focused check, not a complete accessibility audit.
-- **Hosted verification:** Pending the final redeploy and fresh-context check for this revision. Local browser results above are not being presented as hosted verification.
+- **Accessibility checks:** Decorative icon glyphs are hidden from accessibility output, tab labels have explicit names, disabled controls expose disabled semantics, and measured home-screen text contrast ratios exceeded 4.5:1. A final visual check caught compressed tab labels; the labels now have non-shrinking 16px line boxes and were checked at 375 × 812, 320 × 568, 1440 × 900 and 1440 × 360. This is a focused check, not a complete accessibility audit.
+- **Hosted verification:** The updated private preview passed a fresh-context walkthrough at its actual hosted document path: automatic sample encounter, same-route gesture-to-chat, trimmed messages in both participant views, draft isolation, cancel/delete, a separate encounter, non-sharing Stop, permission pause/re-enable, single-back navigation, profile validation/save, browser Back/Forward and new-event default-off permission. Fresh profile and missing-conversation/recap hash links also passed. All four Inter faces and the Feather icon font loaded; no page, request or HTTP errors were observed.
 
 Scrollable pages deliberately extend below the viewport. The main recording Stop control is separate from that scrollable content.
 

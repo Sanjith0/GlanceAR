@@ -30,3 +30,9 @@ This repository started empty. The browser preview is a labelled sample-data wal
 - Confirm browser back/forward and fresh hash deep links restore the correct route; missing in-memory conversations show the existing safe unavailable state.
 - Check all three bottom-tab labels have at least a 16px line box, do not flex-shrink, and remain fully visible at phone and desktop viewport heights.
 - Confirm no browser storage is introduced, native resolution still uses unmodified Expo modules, and no backend/native/safety source changes are required.
+
+## Latest browser verification
+
+The October 24 revision passed the local inventory and a fresh-context walkthrough of the actual private deployment. The hosted checks covered automatic encounter, direct gesture-to-chat, both message perspectives, deletion, separate encounters, ordinary Stop, event permission cycling, profile editing, event creation and safe hash deep links; all five font faces loaded without page or network errors.
+
+The deployment contains 39 files and retains the existing Glance app link. These browser checks exercise fictional sample data only and do not establish native microphone, glasses, clipboard or physical navigation behavior.

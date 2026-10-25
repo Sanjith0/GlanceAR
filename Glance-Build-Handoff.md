@@ -16,7 +16,7 @@ The private harness setup uses one JSON value, with an explicit reveal and Copy 
 
 ## Try the preview
 
-Choose **Enter event** and the sample encounter starts automatically. Choose **Simulate three-finger gesture** to go straight into the shared chat, with no Start or additional connection-confirmation step.
+Open the [updated private Glance preview](https://www.perplexity.ai/computer/a/glance-Eek5EOQRQBKYzYNttRBsVQ); refresh it if an earlier revision is already open. Choose **Enter event** and the sample encounter starts automatically, then **Simulate three-finger gesture** to go straight into the shared chat, with no Start or additional connection-confirmation step.
 
 Send a message and switch between the Alex/Sam preview controls to see both sides. Each perspective receives the same sample recap with the other person's portrait, and **Simulate next encounter** creates a new segment when you return to the event. The preview does not record, recognize faces, transcribe or contact a real attendee; reloading resets its state.
 
