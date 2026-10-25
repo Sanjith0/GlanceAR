@@ -1,5 +1,31 @@
 # Glance verification record
 
+## Frontend redesign — October 25, 2026
+
+Checked in a Linux container with Node 22.23 against the rebased `design/glance-frontend` branch. The sample walkthrough (no `EXPO_PUBLIC_CONVEX_URL`) was exercised; no backend, native build or physical device was involved.
+
+| Check | Result | Boundary |
+| --- | --- | --- |
+| `npx tsc --noEmit` | Passed | Application, adapters, new screens and services |
+| `npx expo lint` | Passed | Includes the React Compiler rules; no warnings |
+| `npx vitest run` | Passed | 18 files, 300 tests; the demo-state tests still run against the seeded fixtures |
+| `npm run test:glasses` | Passed | 22 source-contract checks |
+| `npx tsc -p convex/tsconfig.json --noEmit` | Passed | Backend untouched by this change |
+| `expo export --platform web` + `scripts/portable-web-export.mjs` | Passed | Hash routes, relative asset references, Fraunces and Inter under `assets/vendor` |
+| Headless Chromium walkthrough (Playwright) | Passed | 42 steps at 390×844 and again at 1440×900, screenshots inspected, no page or console errors |
+
+Journeys replayed on the portable export, phone and desktop:
+
+1. Welcome → Sign up → sample face scan (ready, scanning, success) → details with inline validation → interests → sample LinkedIn import → review → Events.
+2. Signup completed with no phone, no email and (in a second pass) no LinkedIn import.
+3. LinkedIn sample import merged five items without losing a manually typed interest.
+4. Join with code `INKNIGHT` → invitation → RSVP Going → share sheet; `/invite/NOSLIDES` while signed out kept the invitation through login and opened the event.
+5. Create event with validation → cover theme, day and time → review invitation → simulated publish → event detail with the published notice.
+6. Enter event → People to meet → person sheet and bookmark → live view (preparing, searching, recognized) → Start a conversation → Finish & connect → green acknowledgment → shared recap and chat → message sent.
+7. Stop without sharing; interrupted and unavailable face scans with retry; camera-permission state in the live view; empty events; empty connections; log out and simulated log in.
+
+Not verified here: the hand-landmarker model could not be downloaded (storage.googleapis.com is blocked in this environment), so the conversation screen showed its existing camera-unavailable retry and the button finish was used; the camera lab (`/register/[id]`, `/live/[id]`), live Convex mode, demo summaries, native iOS, real cameras, screen readers and physical-keyboard behavior were not exercised.
+
 ## LIVE Camera face recognition — October 25, 2026
 
 Checked on macOS (arm64) with Node 20.18.0, below the project's declared Node ≥22.13 engine; rerun under Node 24 before relying on these results. No Convex deployment exists, so live multi-device sync is verified through `convex-test`, not real phones.

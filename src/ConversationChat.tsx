@@ -8,7 +8,7 @@ import type { Conversation, Profile } from './domain';
 import { colors, fonts, s } from './theme';
 
 /** Speaker 1 blue, Speaker 2 green, alternating after that. */
-const speakerColors = [colors.green, colors.blue];
+const speakerColors = [colors.green, colors.powderDeep];
 const timestamp = (ms: number) => `${Math.floor(ms / 60_000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
 
 export interface ConversationChatProps {
@@ -28,6 +28,10 @@ export interface ConversationChatProps {
   previewControls?: React.ReactNode;
   /** Caller-owned upload progress, retained-audio retry, or other capture notice. */
   notice?: React.ReactNode;
+  /** Event context, shared interests and the private note, rendered above the recap. */
+  context?: React.ReactNode;
+  /** Opens the other person's profile sheet. */
+  onOpenPerson?: () => void;
 }
 
 const MAX_MESSAGE_LENGTH = 2_000;
@@ -44,7 +48,7 @@ export function ConversationChat(props: ConversationChatProps) {
 
 function ChatContent({
   conversation, me, eventTitle, demo, sending = false, onSend, onBack, onDelete,
-  error, previewControls, notice,
+  error, previewControls, notice, context, onOpenPerson,
 }: ConversationChatProps) {
   const [draft, setDraft] = useState('');
   const [operation, setOperation] = useState<'send' | 'delete' | null>(null);
@@ -122,11 +126,14 @@ function ChatContent({
         onPress={onBack} style={({ pressed }) => [styles.iconButton, pressed && s.pressed]}>
         <Icon name="arrow-left" />
       </Pressable>
-      <Portrait person={peer} size={44} />
-      <View style={styles.headerText}>
-        <Text accessibilityRole="header" style={styles.peerName}>{peer.name}</Text>
-        <Text style={s.small}>{connected && !closed ? 'Connected' : 'Conversation'}{eventTitle ? ` · ${eventTitle}` : ''}</Text>
-      </View>
+      <Pressable accessibilityRole={onOpenPerson ? 'button' : undefined} accessibilityLabel={onOpenPerson ? `About ${peer.name}` : undefined} disabled={!onOpenPerson} onPress={onOpenPerson}
+        style={({ pressed }) => [styles.headerPerson, pressed && onOpenPerson && s.pressed]}>
+        <Portrait person={peer} size={44} />
+        <View style={styles.headerText}>
+          <Text accessibilityRole="header" style={styles.peerName}>{peer.name}</Text>
+          <Text numberOfLines={1} style={s.small}>{connected && !closed ? 'Connected' : 'Conversation'}{eventTitle ? ` at ${eventTitle}` : ''}</Text>
+        </View>
+      </Pressable>
       <Pressable accessibilityRole="button" accessibilityLabel="Delete conversation"
         accessibilityState={{ disabled: busy || closed }} disabled={busy || closed}
         testID="chat-delete" onPress={() => {
@@ -155,11 +162,12 @@ function ChatContent({
           <Icon name="check-circle" color={colors.green} size={16} />
           <Text style={[s.small, styles.flexText]}>You and {peer.name.split(' ')[0]} are connected.</Text>
         </View>
+        {context}
         <View style={styles.recapCard} testID="chat-recap">
           <View style={styles.recapHeading}>
-            <Icon name={recap ? 'file-text' : recapPending ? 'clock' : 'info'} color={colors.blue} size={18} />
+            <Icon name={recap ? 'file-text' : recapPending ? 'clock' : 'info'} color={colors.ink} size={18} />
             <Text style={styles.recapLabel}>{recap?.source === 'sample' && demo
-              ? 'SAMPLE RECAP · NOT TRANSCRIBED' : recap?.source === 'ai' ? 'SHARED AI RECAP' : 'SHARED RECAP'}</Text>
+              ? 'Sample recap, not a transcription' : recap?.source === 'ai' ? 'Shared AI recap' : 'Shared recap'}</Text>
           </View>
           {recap ? <>
             <Text style={s.body}>{recap.summary}</Text>
@@ -169,7 +177,7 @@ function ChatContent({
             {recap.nextSteps.length > 0 && <View style={styles.nextSteps}>
               <Text style={s.label}>Keep the conversation going</Text>
               {recap.nextSteps.map((step, index) => <View key={`${index}-${step}`} style={styles.nextStep}>
-                <Icon name="arrow-up-right" color={colors.blue} size={16} />
+                <Icon name="arrow-up-right" color={colors.ink} size={16} />
                 <Text style={[s.muted, styles.flexText]}>{step}</Text>
               </View>)}
             </View>}
@@ -189,7 +197,7 @@ function ChatContent({
               ? 'This is a scripted example, not a transcription.'
               : 'The same recap is shared with both of you. AI can miss details; check anything important together.'}</Text>
           </> : recapPending ? <>
-            <View style={s.row}><ActivityIndicator size="small" color={colors.blue} />
+            <View style={s.row}><ActivityIndicator size="small" color={colors.ink} />
               <Text accessibilityRole="header" style={[s.label, styles.flexText]}>Your recap is on its way</Text></View>
             <Text style={s.muted}>You can message each other while your shared recap is prepared.</Text>
           </> : <>
@@ -241,7 +249,7 @@ function ChatContent({
             disabled={!canSend} onPress={() => void send()} testID="chat-send"
             style={({ pressed }) => [styles.sendButton, !canSend && styles.sendDisabled, pressed && s.pressed]}>
             {operation === 'send' || sending ? <ActivityIndicator color={colors.muted} size="small" />
-              : <Icon name="arrow-up" color={canSend ? colors.paper : colors.muted} size={21} />}
+              : <Icon name="arrow-up" color={canSend ? colors.cream : colors.muted} size={21} />}
           </Pressable>
         </View>
         <View style={styles.composerNotes}>
@@ -254,23 +262,24 @@ function ChatContent({
 }
 
 const styles = StyleSheet.create({
-  frame: { flex: 1, minHeight: 0, backgroundColor: colors.paper },
+  frame: { flex: 1, minHeight: 0, backgroundColor: colors.canvas },
   header: {
-    flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingVertical: 12,
-    borderBottomWidth: 1, borderBottomColor: colors.line, backgroundColor: colors.paper,
+    flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 10,
+    borderBottomWidth: 1, borderBottomColor: colors.line, backgroundColor: colors.canvas,
   },
-  headerText: { flex: 1, minWidth: 0, gap: 3 },
-  peerName: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 17, lineHeight: 23 },
-  iconButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  headerPerson: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  headerText: { flex: 1, minWidth: 0, gap: 2 },
+  peerName: { color: colors.ink, fontFamily: fonts.display, fontSize: 20, lineHeight: 24 },
+  iconButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 22 },
   history: { flex: 1, minHeight: 0 },
-  historyContent: { paddingHorizontal: 20, paddingTop: 20, paddingBottom: 24, gap: 18 },
+  historyContent: { paddingHorizontal: 20, paddingTop: 20, paddingBottom: 24, gap: 18, width: '100%', maxWidth: 680, alignSelf: 'center' },
   connectionLine: { flexDirection: 'row', alignItems: 'center', gap: 8, justifyContent: 'center' },
   flexText: { flex: 1, minWidth: 0 },
-  recapCard: { padding: 18, gap: 14, backgroundColor: colors.canvas, borderRadius: 18 },
+  recapCard: { padding: 18, gap: 14, backgroundColor: colors.paper, borderRadius: 22 },
   recapHeading: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  recapLabel: { flex: 1, color: colors.blue, fontFamily: fonts.semibold, fontSize: 12, lineHeight: 18 },
+  recapLabel: { flex: 1, color: colors.ink, fontFamily: fonts.semibold, fontSize: 13, lineHeight: 18 },
   topics: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  topic: { maxWidth: '100%', paddingHorizontal: 10, paddingVertical: 6, backgroundColor: colors.paper, borderRadius: 8 },
+  topic: { maxWidth: '100%', paddingHorizontal: 10, paddingVertical: 6, backgroundColor: colors.powderLight, borderRadius: 999 },
   nextSteps: { gap: 10 },
   nextStep: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   transcript: { gap: 12, paddingTop: 4 },
@@ -279,20 +288,20 @@ const styles = StyleSheet.create({
   emptyMessages: { color: colors.muted, fontFamily: fonts.body, fontSize: 13, lineHeight: 20, textAlign: 'center', paddingVertical: 12 },
   messageRow: { flexDirection: 'row', justifyContent: 'flex-start' },
   myMessageRow: { justifyContent: 'flex-end' },
-  bubble: { maxWidth: '88%', minWidth: 72, paddingHorizontal: 14, paddingVertical: 11, borderRadius: 16, gap: 5 },
-  myBubble: { backgroundColor: colors.blue, borderBottomRightRadius: 5 },
-  theirBubble: { backgroundColor: colors.canvas, borderBottomLeftRadius: 5 },
+  bubble: { maxWidth: '88%', minWidth: 72, paddingHorizontal: 14, paddingVertical: 11, borderRadius: 18, gap: 4 },
+  myBubble: { backgroundColor: colors.ink, borderBottomRightRadius: 6 },
+  theirBubble: { backgroundColor: colors.paper, borderBottomLeftRadius: 6 },
   messageMeta: { color: colors.muted, fontFamily: fonts.medium, fontSize: 12, lineHeight: 18 },
-  myMessageMeta: { color: colors.paper },
+  myMessageMeta: { color: colors.powder },
   messageText: { color: colors.ink, fontFamily: fonts.body, fontSize: 15, lineHeight: 22, flexShrink: 1 },
-  myMessageText: { color: colors.paper },
-  footer: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12, gap: 10, borderTopWidth: 1, borderTopColor: colors.line, backgroundColor: colors.paper },
-  composer: { flexDirection: 'row', alignItems: 'flex-end', gap: 10 },
-  messageInput: { flex: 1, minWidth: 0, minHeight: 46, maxHeight: 128, paddingHorizontal: 14, paddingVertical: 12,
-    borderWidth: 1, borderColor: colors.line, borderRadius: 18, fontFamily: fonts.body, fontSize: 15, lineHeight: 21,
+  myMessageText: { color: colors.cream },
+  footer: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12, gap: 10, borderTopWidth: 1, borderTopColor: colors.line, backgroundColor: colors.canvas },
+  composer: { flexDirection: 'row', alignItems: 'flex-end', gap: 10, width: '100%', maxWidth: 680, alignSelf: 'center' },
+  messageInput: { flex: 1, minWidth: 0, minHeight: 46, maxHeight: 128, paddingHorizontal: 16, paddingVertical: 12,
+    borderWidth: 1.5, borderColor: colors.line, borderRadius: 22, fontFamily: fonts.body, fontSize: 15, lineHeight: 21,
     color: colors.ink, backgroundColor: colors.paper },
-  sendButton: { width: 46, height: 46, borderRadius: 16, backgroundColor: colors.blue, justifyContent: 'center', alignItems: 'center' },
-  sendDisabled: { backgroundColor: colors.canvas, borderWidth: 1, borderColor: colors.line },
-  composerNotes: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
-  deletePanel: { gap: 10 },
+  sendButton: { width: 46, height: 46, borderRadius: 23, backgroundColor: colors.ink, justifyContent: 'center', alignItems: 'center' },
+  sendDisabled: { backgroundColor: colors.creamDeep, borderWidth: 0 },
+  composerNotes: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, width: '100%', maxWidth: 680, alignSelf: 'center' },
+  deletePanel: { gap: 10, width: '100%', maxWidth: 680, alignSelf: 'center' },
 });

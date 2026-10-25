@@ -1,18 +1,13 @@
-import portraits from '../assets/demo-portraits.json';
 import type { ChatMessage, Conversation, Event, FaceDirectory, Profile, Recap, Snapshot } from './domain';
 import { DEMO_FACE_LIMIT, EVENT_PERMISSION_POLICY_VERSION, FACE_MODEL } from './domain';
 import { compactDescriptor, validDescriptors } from './face';
+import { fixturePeople } from './fixtures/people';
+import { fixtureEvents } from './fixtures/events';
 
-export const samplePeople: Profile[] = [
-  { id: 'alex', name: 'Alex Chen', role: 'Builder · human-centered AI', photoUrl: portraits.alex },
-  { id: 'sam', name: 'Sam Rivera', role: 'Designer · creative tools', photoUrl: portraits.sam },
-];
-export const sampleRecap: Recap = {
-  summary: 'You connected over making technology feel more human. Alex is building tools that help people stay present, while Sam is exploring more thoughtful ways to capture creative ideas. You both want useful AI that stays out of the way.',
-  topics: ['Human-centered AI', 'Creative collaboration', 'Designing for presence'],
-  nextSteps: ['Compare your early prototypes over coffee.', 'Share one example of an AI interaction that feels natural.'],
-  source: 'sample',
-};
+import { sampleRecap, scriptedRecap } from './fixtures/connections';
+export { sampleRecap };
+/** The two walkthrough participants with sample portraits; the rest of the room lives in `fixtures/people.ts`. */
+export const samplePeople: Profile[] = fixturePeople.slice(0, 2);
 export interface DemoState {
   actor: string;
   people: Profile[];
@@ -25,11 +20,13 @@ export interface DemoState {
   faceScans: Record<string, number[][]>;
 }
 export function initialDemo(): DemoState {
+  const seeded = fixtureEvents();
   return {
-    actor: 'alex', people: [...samplePeople],
-    events: [{ id: 'builders', title: 'Builders, after hours', location: 'The studio · Demo event', inviteCode: 'GLANCE2026', hostId: 'alex' }],
-    memberships: { builders: ['alex', 'sam'] },
-    eventPermissions: { builders: ['alex', 'sam'] }, conversations: [], faceScans: {},
+    actor: 'alex', people: [...fixturePeople],
+    events: seeded.map(item => item.event),
+    memberships: Object.fromEntries(seeded.map(item => [item.event.id, [...item.members]])),
+    eventPermissions: Object.fromEntries(seeded.map(item => [item.event.id, [...item.enabled]])),
+    conversations: [], faceScans: {},
   };
 }
 export type DemoAction =
@@ -108,7 +105,7 @@ export function demoReducer(state: DemoState, action: DemoAction): DemoState {
       const now = Date.now();
       const connected = { ...c, endedAt: now, connectedAt: now, finishMethod: action.method,
         exchangeConsent: c.participants.map(p => p.id), messages: [] };
-      return action.awaitingSummary ? { ...connected, status: 'processing' } : { ...connected, status: 'shared', recap: sampleRecap };
+      return action.awaitingSummary ? { ...connected, status: 'processing' } : { ...connected, status: 'shared', recap: scriptedRecap(c.participants) };
     }
     if (action.type === 'message' && (c.connectedAt || c.status === 'shared') && c.status !== 'cancelled') {
       const text = action.message.text.trim();
