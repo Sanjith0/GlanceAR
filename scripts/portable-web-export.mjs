@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 export function portableReferences(text) {
   return text
     .replaceAll('/assets/node_modules/', '/assets/vendor/')
+    .replaceAll('/assets/vendor/@expo/vector-icons/build/', '/assets/vendor/@expo/vector-icons/package-assets/')
     .replace(/(["'])\/(_expo\/|assets\/|favicon\.ico)/g, '$1./$2');
 }
 
@@ -26,6 +27,14 @@ export async function makePortableExport(outputDirectory) {
     // Many static artifact uploaders intentionally omit node_modules directories.
     // These are exported font/image assets, not dependencies.
     await rename(dependencyAssets, path.join(outputDirectory, 'assets/vendor'));
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  const vectorIconAssets = path.join(outputDirectory, 'assets/vendor/@expo/vector-icons');
+  try {
+    // "build" is also excluded by static artifact uploaders, even when it only
+    // contains an exported font. Rename this asset subtree, not package code.
+    await rename(path.join(vectorIconAssets, 'build'), path.join(vectorIconAssets, 'package-assets'));
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
   }
