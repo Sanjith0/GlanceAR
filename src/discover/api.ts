@@ -63,3 +63,51 @@ export async function readScreenshot(session: DiscoverSession, image: string): P
     throw new Error(message(error, 'The backend could not read your screenshot.'));
   }
 }
+
+/* ---------- People matching and Facebook sign-in (need the backend and a profile) ---------- */
+
+const NEEDS_PROFILE = 'This needs the backend and your Glance profile.';
+
+/** Switches people matching on, or replaces the saved list. Returns the list as the server stored it. */
+export async function saveInterests(session: DiscoverSession, interests: string[]): Promise<string[]> {
+  if (session.muse !== 'ready') throw new Error(NEEDS_PROFILE);
+  try {
+    return await backend(session.deploymentURL).mutation(anyApi.peopleData.saveInterests, { token: session.token, interests }) as string[];
+  } catch (error) {
+    throw new Error(message(error, 'The backend could not save your interests.'));
+  }
+}
+/** Switches people matching off and deletes the saved list. */
+export async function clearInterests(session: DiscoverSession): Promise<void> {
+  if (session.muse !== 'ready') throw new Error(NEEDS_PROFILE);
+  try {
+    await backend(session.deploymentURL).mutation(anyApi.peopleData.clearInterests, { token: session.token });
+  } catch (error) {
+    throw new Error(message(error, 'The backend could not switch people matching off.'));
+  }
+}
+export type MatchOutcome = 'muse' | 'basic' | 'current' | 'stale';
+/** Asks Muse Spark what you share with the other opted-in people at one event. The answer arrives in the snapshot. */
+export async function matchPeople(deploymentURL: string, token: string, eventId: string, force = false): Promise<MatchOutcome> {
+  try {
+    return await backend(deploymentURL).action(anyApi.people.match, { token, eventId, ...(force ? { force } : {}) }) as MatchOutcome;
+  } catch (error) {
+    throw new Error(message(error, 'The backend could not match you with people here.'));
+  }
+}
+export interface FacebookRead extends TasteRead { pages: number; posts: number; revoked: boolean }
+export async function beginFacebook(session: DiscoverSession, redirectUri: string): Promise<{ url: string; state: string }> {
+  if (session.muse !== 'ready') throw new Error(NEEDS_PROFILE);
+  try {
+    return await backend(session.deploymentURL).action(anyApi.facebook.begin, { token: session.token, redirectUri }) as { url: string; state: string };
+  } catch (error) {
+    throw new Error(message(error, 'The backend could not start Facebook sign-in.'));
+  }
+}
+export async function completeFacebook(session: DiscoverSession, state: string, code: string): Promise<FacebookRead> {
+  try {
+    return await backend(session.deploymentURL).action(anyApi.facebook.complete, { token: session.token, state, code }) as FacebookRead;
+  } catch (error) {
+    throw new Error(message(error, 'The backend could not read your Facebook activity.'));
+  }
+}

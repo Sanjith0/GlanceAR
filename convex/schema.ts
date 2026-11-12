@@ -116,11 +116,46 @@ export default defineSchema({
     .index("by_pair", ["conversationId", "profileId"])
     .index("by_conversation", ["conversationId"])
     .index("by_expiry", ["expiresAt"]),
-  // Events (Discover) mode: a per-profile daily counter that caps Muse calls.
-  // Interests, screenshots and picks are never stored.
+  // Events (Discover) mode: per-profile daily counters that cap Muse calls
+  // (`count`: screenshot reads, Facebook reads and rankings; `people`: people matching).
+  // Screenshots, Facebook data and picks are never stored.
   discoverUsage: defineTable({
     profileId: v.id("profiles"),
     day: v.string(),
     count: v.number(),
+    people: v.optional(v.number()),
   }).index("by_profile_day", ["profileId", "day"]),
+  // People matching is opt-in: a row exists only while its owner has it switched on,
+  // and holds the interest phrases they reviewed. Other attendees never receive this list.
+  interestProfiles: defineTable({
+    profileId: v.id("profiles"),
+    interests: v.array(v.string()),
+    updatedAt: v.number(),
+  }).index("by_profile", ["profileId"]),
+  // What Muse found a viewer shares with the other opted-in members of one event.
+  // `shared` is always the viewer's own wording. Shown only while `key` still matches
+  // the interest lists it was computed from, and swept after a day.
+  peopleMatches: defineTable({
+    profileId: v.id("profiles"),
+    eventId: v.id("events"),
+    key: v.string(),
+    matches: v.array(v.object({ profileId: v.id("profiles"), shared: v.array(v.string()), opener: v.string() })),
+    source: v.union(v.literal("muse"), v.literal("basic")),
+    model: v.optional(v.string()),
+    notice: v.optional(v.string()),
+    updatedAt: v.number(),
+  })
+    .index("by_viewer_event", ["profileId", "eventId"])
+    .index("by_updated", ["updatedAt"]),
+  // A Facebook sign-in in progress, at most one per profile. Only the hash of its
+  // one-time state is kept, for ten minutes. No Facebook token or data is ever stored.
+  facebookStates: defineTable({
+    profileId: v.id("profiles"),
+    stateHash: v.string(),
+    redirectUri: v.string(),
+    expiresAt: v.number(),
+  })
+    .index("by_profile", ["profileId"])
+    .index("by_state", ["stateHash"])
+    .index("by_expiry", ["expiresAt"]),
 });

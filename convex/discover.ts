@@ -3,7 +3,6 @@
 
 import { anyApi } from "convex/server";
 import { v, ConvexError } from "convex/values";
-import { env } from "node:process";
 import { action } from "./server";
 import { MUSE_MODEL, discoverError, failureCode, metaBaseUrl, rankEvents, readInterests } from "./meta";
 import { basicRecommend, cleanInterests, type Recommendation, type Signals, type TasteRead } from "../src/discover/catalog";
@@ -21,9 +20,9 @@ export const readScreenshot = action({
   handler: async (ctx, { token, image }): Promise<TasteRead> => {
     await ctx.runMutation(anyApi.discoverData.begin, { token });
     try {
-      const key = env.META_API_KEY;
+      const key = process.env.META_API_KEY;
       if (!key) throw new Error("MISSING_KEY");
-      return await readInterests(key, image, metaBaseUrl(env.META_API_BASE_URL));
+      return await readInterests(key, image, metaBaseUrl(process.env.META_API_BASE_URL));
     } catch (error) {
       console.error(`Discover screenshot read failed: ${failureCode(error)}`);
       throw new ConvexError(discoverError(error));
@@ -53,9 +52,9 @@ export const recommend = action({
     };
     if (!signals.interests.length && !signals.intro) return { picks: [], source: "basic" };
     try {
-      const key = env.META_API_KEY;
+      const key = process.env.META_API_KEY;
       if (!key) throw new Error("MISSING_KEY");
-      const picks = await rankEvents(key, signals, metaBaseUrl(env.META_API_BASE_URL));
+      const picks = await rankEvents(key, signals, metaBaseUrl(process.env.META_API_BASE_URL));
       return { picks, source: "muse", model: MUSE_MODEL };
     } catch (error) {
       console.error(`Discover ranking failed: ${failureCode(error)}`);

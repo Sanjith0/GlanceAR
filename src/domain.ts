@@ -6,6 +6,26 @@ export interface Profile {
   photoUrl: string;
   /** Only present on me/members when a specific event is selected. */
   glanceEnabled?: boolean;
+  /**
+   * People matching, on other members of the selected event and only when you
+   * both turned it on: the interests from your own list that they share.
+   */
+  shared?: string[];
+  /** A question to open with about something you share. */
+  opener?: string;
+  /** Only on `me`, and only while people matching is on: the interests saved to your profile. */
+  interests?: string[];
+}
+
+/** How the shared interests on this snapshot's members were found. */
+export interface PeopleMatching {
+  /** 'muse' when Meta's Muse Spark found the overlap and wrote the openers; 'basic' is a wording match. */
+  source: "muse" | "basic";
+  model?: string;
+  /** Why this is a basic match (provider failure, daily limit). */
+  notice?: string;
+  /** True when Muse has not yet looked at the interest lists as they are now. */
+  stale: boolean;
 }
 
 export interface Event {
@@ -92,6 +112,8 @@ export interface Snapshot {
   eventPermission?: EventPermission;
   /** Global recorder-owned consent/recording session, even when another event is selected. */
   activeRecorderConversationId?: string;
+  /** Present when an event is selected and you turned people matching on. */
+  matching?: PeopleMatching;
 }
 
 export interface ProfileInput {

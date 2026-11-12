@@ -10,6 +10,8 @@ import { browserAudioSupported } from './capture/browserAudio';
 import { ConvexError } from 'convex/values';
 import { isAudioCaptureAvailable, requestAudioPermission } from './capture/audio';
 import { requestGestureCameraPermission } from './capture/GestureCapture';
+import { useSampleMatchInterests } from './discover/store';
+import { withSampleMatching } from './discover/people';
 
 export const deploymentURL = process.env.EXPO_PUBLIC_CONVEX_URL ?? '';
 interface GlanceState {
@@ -222,7 +224,9 @@ export function GlanceProvider({ children }: { children: React.ReactNode }) {
       dispatch({ type: 'recapFailed', id: conversationId, error });
     }
   }, []);
-  const snapshot = mode === 'demo' ? demoSnapshot(sample, selectedEvent) : liveSnapshot;
+  // The walkthrough has no backend, so its people matching is computed here from fictional interests.
+  const sampleInterests = useSampleMatchInterests();
+  const snapshot = mode === 'demo' ? withSampleMatching(demoSnapshot(sample, selectedEvent), sampleInterests) : liveSnapshot;
   const captureChoiceLocked = pairing || Boolean(snapshot?.activeRecorderConversationId);
   const setCaptureSource = (source: 'phone' | 'glasses') => {
     if (pairingInFlight.current || snapshot?.activeRecorderConversationId) return;

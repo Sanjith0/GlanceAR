@@ -32,13 +32,13 @@ Do not place `META_API_KEY` in an `EXPO_PUBLIC_*` variable, app config, client c
 
 `src/domain.ts` is the public wire contract, and `src/data/convexClient.ts` exports `createGlanceClient(url)`. The wrapper uses `ConvexReactClient`, typed method signatures, reactive snapshots, and `anyApi` references so the interface can compile before deployment codegen.
 
-Every public function is in the `glance` module. All operations below are mutations except `snapshot`, which is a query.
+The core Glance functions are in the `glance` module. All operations below are mutations except `snapshot`, which is a query. The Events view adds the `discover`, `facebook`, `people` and `peopleData` modules, described under [Events view, Connect Facebook and people matching](#events-view-connect-facebook-and-people-matching).
 
 | Function | Additional arguments after `token` | Result |
 | --- | --- | --- |
 | `register` | `name`, `role`, `photoUrl` | Profile ID |
 | `updateProfile` | `name`, `role`, `photoUrl` | `null` |
-| `snapshot` | Optional `eventId` | `{me, events, event?, members, conversations}` |
+| `snapshot` | Optional `eventId` | `{me, events, event?, members, conversations, matching?}`; with people matching on, `me.interests` is the saved list and each other opted-in member carries `shared` and `opener` |
 | `createEvent` | `title`, `location` | Event ID |
 | `joinEvent` | `inviteCode` | Event ID |
 | `setEventPermission` | `eventId`, `enabled` | `null`; changes only the authenticated person's grant |
@@ -190,6 +190,38 @@ Summarization uses `POST https://api.meta.ai/v1/chat/completions` with `muse-spa
 - **Provider scope:** Deleting application storage does not promise deletion from provider systems, backups, or already transmitted requests. Do not describe Standard mode as zero retention; confirm the deployed provider terms and retention configuration before handling real conversations.
 
 No production Meta credentials or real provider calls were used in the backend tests. Provider-contract tests use deterministic mocked HTTP responses, and the live local smoke does not upload audio or invoke a model, including when it exercises event-level finish and connection.
+
+## Events view, Connect Facebook and people matching
+
+All of these take the same device `token` as the `glance` module and need a registered profile.
+
+| Function | Kind | Additional arguments after `token` | Result |
+| --- | --- | --- | --- |
+| `discover.recommend` | action | `interests`, optional `summary`, optional `useIntro` | Up to six Muse picks, or a labelled basic match |
+| `discover.readScreenshot` | action | `image` (data URL) | `{interests, summary}` |
+| `facebook.begin` | action | `redirectUri` | `{url, state}`: the Login dialog address and a one-time state |
+| `facebook.complete` | action | `state`, `code` | `{interests, summary, pages, posts, revoked}` |
+| `peopleData.saveInterests` | mutation | `interests` | `null`; switches people matching on, or replaces the saved list |
+| `peopleData.clearInterests` | mutation | none | `null`; switches it off and deletes the list and the caller's stored matches |
+| `people.match` | action | `eventId`, optional `force` | `"muse"`, `"basic"`, `"current"` or `"stale"`; the result itself arrives through `snapshot` |
+
+Server-side environment variables, set with `npx convex env set` and read when a function runs, so a change applies to the next call:
+
+| Variable | Needed for | Notes |
+| --- | --- | --- |
+| `META_API_KEY` | every Muse call | Never in client code or an `EXPO_PUBLIC_*` variable |
+| `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET` | Connect Facebook | From your own Meta app with the Facebook Login product |
+| `FACEBOOK_GRAPH_VERSION` | optional | Defaults to `v27.0` |
+| `META_API_BASE_URL`, `FACEBOOK_DIALOG_BASE_URL`, `FACEBOOK_GRAPH_BASE_URL` | local testing only | Point the deployment at your own stand-ins; unset them before using real credentials |
+
+- **Connect Facebook:** `begin` stores a SHA-256 hash of a random 32-byte state with the redirect address for ten minutes (`facebookStates`). `complete` claims it once, for the device that started it, then exchanges the code, reads up to 200 liked Pages (name and category) and up to 25 recent posts (text, cut to 280 characters) with `appsecret_proof`, then calls `DELETE /me/permissions` whether or not those reads worked, and only then asks `muse-spark-1.3` for interests under the `FacebookInterests` schema. The access token exists only inside that one action run. Nothing read from Facebook is written to a table, and logs carry a failure code only.
+- **Redirect address:** any HTTPS origin is accepted (plain HTTP only on loopback, for local testing). The gate is the **Valid OAuth Redirect URIs** list on the Meta app, which Facebook matches exactly; keep that list to the addresses you really serve the app from.
+- **Scopes:** `user_likes` and `user_posts` only. Facebook offers apps no permission for Reels, watch or browsing history. Before App Review, only people with a role on the Meta app can grant them.
+- **Saved interests:** `interestProfiles` holds at most 24 interests per profile, and only while people matching is on. A web session cannot switch it off after its tab closes, because the device credential lives in memory; the list then stays with the profile.
+- **Matching:** `people.match` loads the caller's list and the lists of the event's other opted-in members inside the backend. Muse first returns pairs under the `SharedPairs` schema, with members named `p1`, `p2` and so on instead of by profile; a pair is kept only if both phrases really are in the two lists, and identical wording counts without Muse. A second call (`Openers`) writes one question per person from the confirmed overlap in the caller's own words and the event title. The result is stored per viewer and event (`peopleMatches`) with a fingerprint of the lists it was computed from, so it is reused until a list changes and is deleted after 24 hours by the retention sweep.
+- **What a viewer receives:** phrases from their own list and an opener. Never another member's wording, the rest of their list or its length. Until Muse has judged the current lists, and whenever it fails, the snapshot carries a wording match (same words, or one phrase ending in the other) with `source:"basic"`; the app labels it BASIC MATCH.
+- **Limits:** 40 people-matching calls and 40 Discover calls per profile per UTC day (`discoverUsage`). At the people cap an existing Muse result is kept and gains a notice; otherwise the wording match is stored with the reason.
+- **Known gaps:** saving a list is not rate limited, so a member could re-save guesses to probe another member's list, and a judged, empty overlap hints that the two lists have nothing in common. Add a per-profile save limit before using this with real attendees. Leaving out sensitive topics (health, religion, politics and similar) is an instruction in each Muse prompt, not a filter on what comes back.
 
 ## Verification
 

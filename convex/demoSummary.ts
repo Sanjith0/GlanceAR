@@ -3,7 +3,6 @@
 
 import { anyApi } from "convex/server";
 import { v, ConvexError } from "convex/values";
-import { env } from "node:process";
 import { action } from "./server";
 import { validateWav } from "./validation";
 import { failureCode, metaBaseUrl, safeError, summarizeTranscript, transcribeDiarized } from "./meta";
@@ -19,18 +18,18 @@ const DISABLED = "Demo summaries are disabled on this deployment.";
 export const summarize = action({
   args: { storageId: v.id("_storage") },
   handler: async (ctx, { storageId }): Promise<{ recap: Recap }> => {
-    if (env.GLANCE_DEMO_SUMMARIES !== "enabled") throw new ConvexError(DISABLED);
+    if (process.env.GLANCE_DEMO_SUMMARIES !== "enabled") throw new ConvexError(DISABLED);
     if (await ctx.runQuery(anyApi.demoAudio.isConversationAudio, { storageId })) {
       throw new ConvexError("That recording belongs to a conversation, not the demo.");
     }
     try {
-      const key = env.META_API_KEY;
+      const key = process.env.META_API_KEY;
       if (!key) throw new Error("MISSING_KEY");
       const audio = await ctx.storage.get(storageId);
       if (!audio) throw new Error("INVALID_WAV");
       const bytes = await audio.arrayBuffer();
       validateWav(bytes);
-      const base = metaBaseUrl(env.META_API_BASE_URL);
+      const base = metaBaseUrl(process.env.META_API_BASE_URL);
       const { turns, forSummary } = await transcribeDiarized(key, bytes, base);
       const recap = await summarizeTranscript(key, forSummary, base);
       return { recap: { ...recap, transcript: turns } };

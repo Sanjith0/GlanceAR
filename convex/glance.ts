@@ -9,6 +9,7 @@ import {
 } from "../src/domain";
 import type { Profile, Event, Conversation, Snapshot, FaceDirectory, SightingResult } from "../src/domain";
 import { compactDescriptor, validDescriptors } from "../src/face";
+import { eventPeople, matchingView, savedInterests } from "./peopleView";
 
 const authArgs = { token: v.string() };
 const sessionArgs = { ...authArgs, conversationId: v.id("conversations") };
@@ -220,8 +221,16 @@ export const snapshot = query({
     ]);
     const active = activeRecording ?? activeConsent;
     const activeRecorderConversationId = active && await currentEventGrants(ctx, active) ? active._id : undefined;
+    // People matching: only for someone who switched it on, and only phrases from their own list.
+    const people = selected ? await eventPeople(ctx, me._id, members) : null;
+    const interests = people ? people.mine : await savedInterests(ctx, me._id);
+    const matched = people && selected ? await matchingView(ctx, me._id, selected._id, people) : null;
     return {
-      me: profile(me, selected ? enabled(memberships.find((m) => m.eventId === selected._id)!) : undefined),
+      me: {
+        ...profile(me, selected ? enabled(memberships.find((m) => m.eventId === selected._id)!) : undefined),
+        ...(interests ? { interests } : {}),
+      },
+      ...(matched ? { matching: matched.matching } : {}),
       events: events.map(event), ...(selected ? { event: event(selected) } : {}),
       ...(activeRecorderConversationId ? { activeRecorderConversationId } : {}),
       ...(selected ? { eventPermission: {
@@ -232,7 +241,9 @@ export const snapshot = query({
       } } : {}),
       members: (await Promise.all(members.map(async (m) => {
         const p = await ctx.db.get(m.profileId);
-        return p ? profile(p, enabled(m)) : null;
+        if (!p) return null;
+        const line = matched?.lines.get(p._id);
+        return { ...profile(p, enabled(m)), ...(line ? { shared: line.shared, ...(line.opener ? { opener: line.opener } : {}) } : {}) };
       }))).filter((p) => p !== null),
       conversations: await Promise.all([...asA, ...asB]
         .filter((c) => !args.eventId || c.eventId === args.eventId)

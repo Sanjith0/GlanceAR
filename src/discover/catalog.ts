@@ -239,7 +239,8 @@ const STOP = new Set(['a', 'an', 'and', 'the', 'of', 'in', 'on', 'at', 'for', 't
   // Too generic to link a person to an event on their own.
   'night', 'day', 'evening', 'live', 'social', 'club', 'event', 'events', 'weekly', 'local', 'new', 'open', 'meetup',
   'video', 'videos', 'clip', 'clips', 'reel', 'reels', 'content', 'tips', 'stuff']);
-const stem = (word: string) => (word.length > 3 && word.endsWith('s') && !word.endsWith('ss') ? word.slice(0, -1) : word);
+/** Folds a plural "s" so "meetups" and "meetup" compare equal. */
+export const stem = (word: string) => (word.length > 3 && word.endsWith('s') && !word.endsWith('ss') ? word.slice(0, -1) : word);
 const words = (text: string) => text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w && !STOP.has(w)).map(stem);
 /** True when `inner` appears as consecutive whole words inside `outer` ("ar" never matches "art"). */
 const hasSequence = (outer: string[], inner: string[]) => inner.length > 0 && outer.some((_, start) =>

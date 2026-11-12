@@ -6,9 +6,21 @@ function words(text: string): string[] {
   return text.toLowerCase().match(/[a-z][a-z-]{3,}/g)?.filter(w => !STOPWORDS.has(w)) ?? [];
 }
 
-/** Up to three conversation starters from both one-line introductions. No AI, no network. */
-export function talkingPoints(me: Pick<Profile, 'role'> | undefined, them: Pick<Profile, 'role'>, eventTitle?: string): string[] {
+const list = (items: string[]) => (items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`);
+
+/**
+ * Up to three conversation starters. When people matching found interests the two
+ * of you share, those and their opener lead; the rest come from both one-line
+ * introductions, with no AI and no network.
+ */
+export function talkingPoints(
+  me: Pick<Profile, 'role'> | undefined, them: Pick<Profile, 'role' | 'shared' | 'opener'>, eventTitle?: string,
+): string[] {
   const points: string[] = [];
+  if (them.shared?.length) {
+    points.push(`You’re both into ${list(them.shared.slice(0, 3))}`);
+    if (them.opener) points.push(them.opener);
+  }
   const mine = new Set(words(me?.role ?? ''));
   const shared = [...new Set(words(them.role))].filter(w => mine.has(w));
   if (shared.length) points.push(`You both mention ${shared.slice(0, 2).join(' and ')}`);
@@ -19,5 +31,5 @@ export function talkingPoints(me: Pick<Profile, 'role'> | undefined, them: Pick<
     } else points.push(`Ask about ${part}`);
   }
   points.push(eventTitle ? `Ask what brought them to ${eventTitle}` : 'Ask what brought them here');
-  return points.slice(0, 3);
+  return [...new Set(points)].slice(0, 3);
 }

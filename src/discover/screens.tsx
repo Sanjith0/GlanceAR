@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
@@ -11,8 +11,10 @@ import {
   DISCOVER_AREA, DISCOVER_CATEGORIES, SAMPLE_SIGNALS, discoverEvent, eventWhen, splitInterests, upcoming,
   type DiscoverCategory, type DiscoverEvent, type DiscoverPick,
 } from './catalog';
-import { rankForSession, rankKey, readScreenshot, type DiscoverSession } from './api';
+import { clearInterests, rankForSession, rankKey, readScreenshot, saveInterests, type DiscoverSession } from './api';
+import { FacebookCancelled, connectFacebook, facebookConnectAvailable, openFacebookWindow } from './facebook';
 import { ModeSwitch, eventsBlue, eventsBlueLight } from './ModeSwitch';
+import { syncStep } from './people';
 import { addInterests, clearSignals, getDiscover, removeInterest, setDiscover, toggleRsvp, useDiscover } from './store';
 
 /**
@@ -27,6 +29,40 @@ function useSession(): DiscoverSession {
   return useMemo(() => ({
     muse: mode === 'demo' ? 'sample' : registered ? 'ready' : 'no-profile', deploymentURL, token, intro,
   }), [mode, registered, token, intro]);
+}
+
+const sync = { profile: '', hydrated: false, lastSent: null as string | null, sending: false, failures: 0, retryAt: 0 };
+/**
+ * While people matching is on, the interests saved to the profile follow the list
+ * on this device: one save at a time, the latest list last. A device that starts
+ * with an empty list (a relaunched app) takes the saved one first. Mounted by both
+ * Discover and Signals; the state above is shared so they never save twice.
+ */
+function useInterestSync(session: DiscoverSession): void {
+  const { snapshot, run } = useGlance();
+  const { interests } = useDiscover();
+  const [tick, setTick] = useState(0);
+  const saved = snapshot?.me.interests, profile = snapshot?.me.id ?? '';
+  useEffect(() => {
+    if (session.muse !== 'ready' || !profile) return;
+    if (sync.profile !== profile) Object.assign(sync, { profile, hydrated: false, lastSent: null, failures: 0, retryAt: 0 });
+    const step = syncStep(interests, saved, sync.hydrated, sync.lastSent);
+    if (saved !== undefined) sync.hydrated = true;
+    if (step === 'hydrate') { addInterests(saved ?? []); return; }
+    if (step !== 'push' || sync.sending) return;
+    const wait = sync.retryAt - Date.now();
+    if (wait > 0) { const timer = setTimeout(() => setTick(value => value + 1), wait); return () => clearTimeout(timer); }
+    const sent = JSON.stringify(interests);
+    sync.sending = true; sync.lastSent = sent;
+    void run(() => saveInterests(session, interests)).then(
+      () => { sync.failures = 0; sync.retryAt = 0; },
+      () => {
+        // Two more tries, fifteen seconds apart; after that the next edit sends the list again.
+        sync.failures += 1; sync.retryAt = Date.now() + 15_000;
+        if (sync.failures < 3 && sync.lastSent === sent) sync.lastSent = null;
+      },
+    ).finally(() => { sync.sending = false; setTick(value => value + 1); });
+  }, [session, profile, interests, saved, run, tick]);
 }
 const gradient = (event: DiscoverEvent) => ({
   backgroundColor: event.cover.from,
@@ -105,6 +141,7 @@ const searchable = (event: DiscoverEvent) =>
 
 export function DiscoverScreen() {
   const d = useDiscover(), session = useSession(), focused = useScreenFocused();
+  useInterestSync(session);
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<DiscoverCategory | 'All'>('All');
   const all = useMemo(() => upcoming(), []);
@@ -146,7 +183,7 @@ export function DiscoverScreen() {
 
     {!hasSignals && <View style={[s.soft, { backgroundColor: eventsBlueLight, gap: 12, padding: 18 }]}>
       <View style={s.row}><Icon name="zap" color={eventsBlue} /><Text style={[s.heading, s.grow, { fontSize: 18, lineHeight: 24 }]}>Get picks that fit you.</Text></View>
-      <Text style={s.muted}>Share what you’re into, or a screenshot of the topics Facebook shows you in Feed and Reels. Muse Spark ranks these events and tells you why.</Text>
+      <Text style={s.muted}>Connect Facebook, type what you’re into, or share a screenshot of the topics Facebook shows you in Feed and Reels. Muse Spark ranks these events and tells you why.</Text>
       <Button accent={eventsBlue} icon="sliders" testID="add-signals" onPress={() => router.push('/profile')}>Add your signals</Button>
     </View>}
 
@@ -258,11 +295,50 @@ export function GoingScreen() {
 
 const MAX_UPLOAD = 1_900_000;
 export function SignalsScreen() {
-  const d = useDiscover(), session = useSession(), { busy, perform } = useOperation();
+  const app = useGlance(), d = useDiscover(), session = useSession(), { busy, perform } = useOperation();
+  const matchSwitch = useOperation();
+  useInterestSync(session);
   const [draft, setDraft] = useState('');
   const [note, setNote] = useState('');
+  const [facebookNote, setFacebookNote] = useState('');
+  const [connecting, setConnecting] = useState(false);
+  const signIn = useRef<AbortController | null>(null);
+  useEffect(() => () => signIn.current?.abort(), []);
   const intro = session.intro.trim();
   const hasSignals = d.interests.length > 0 || (d.useIntro && intro.length > 0);
+  // With a backend, the list saved to the profile is the switch; the walkthrough keeps its own.
+  const matching = session.muse === 'sample' ? d.matchPeople : app.snapshot?.me.interests !== undefined;
+  const { refresh } = app;
+  const toggleMatching = () => {
+    if (session.muse === 'sample') { setDiscover({ matchPeople: !d.matchPeople }); return; }
+    void matchSwitch.perform(async () => {
+      if (matching) await clearInterests(session); else await saveInterests(session, getDiscover().interests);
+      await refresh();
+    });
+  };
+  const connect = () => {
+    if (busy) return;
+    // Opened here, in the press itself; a window opened after an await is blocked as a pop-up.
+    const popup = openFacebookWindow();
+    void perform(async () => {
+      const abort = new AbortController();
+      signIn.current = abort;
+      setNote(''); setFacebookNote(''); setConnecting(true);
+      try {
+        const read = await connectFacebook(session, popup, abort.signal);
+        addInterests(read.interests, { shared: 'facebook', summary: read.summary });
+        const from = [read.pages ? `${read.pages} Page${read.pages === 1 ? '' : 's'} you like` : '', read.posts ? `${read.posts} recent post${read.posts === 1 ? '' : 's'}` : ''].filter(Boolean).join(' and ');
+        setNote(`Muse Spark read ${read.interests.length} interest${read.interests.length === 1 ? '' : 's'} from ${from || 'your Facebook activity'}. Review them below.`);
+        setFacebookNote(read.revoked ? 'Done. Glance’s access to your Facebook account has been removed.'
+          : 'Done, but Facebook did not confirm that Glance’s access was removed. You can remove Glance under Apps and websites in your Facebook settings.');
+      } catch (error) {
+        if (!(error instanceof FacebookCancelled)) throw error;
+        setFacebookNote(error.message);
+      } finally {
+        signIn.current = null; setConnecting(false);
+      }
+    });
+  };
   const upload = () => perform(async () => {
     setNote('');
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.9 });
@@ -297,6 +373,26 @@ export function SignalsScreen() {
     </View>
 
     <View style={s.card}>
+      <View style={[s.row, { alignItems: 'flex-start' }]}><View style={{ padding: 10, backgroundColor: eventsBlueLight, borderRadius: 12 }}><Icon name="facebook" color={eventsBlue} /></View>
+        <View style={[s.grow, { gap: 4 }]}><Text style={s.label}>Connect Facebook</Text>
+          <Text style={s.small}>Glance asks for two things: the Pages you like and your recent posts. It reads them once and removes its own access, then Muse Spark turns them into interests you review below. Glance never stores the Pages or posts themselves.</Text></View></View>
+      {session.muse !== 'ready' ? <Text style={s.small}>{session.muse === 'sample'
+        ? 'Signing in with Facebook needs the backend, which this sample walkthrough does not have. Try the sample signals below.'
+        : 'Create your Glance profile first; a Facebook sign-in is tied to your device.'}</Text>
+        : !facebookConnectAvailable() ? <Text style={s.small}>Facebook sign-in opens in a browser window, so connect from Glance on the web. This build has no in-app sign-in yet.</Text>
+          : <>
+            <Button accent={eventsBlue} icon="facebook" busy={busy} testID="connect-facebook" onPress={connect}>Connect Facebook</Button>
+            {connecting && <View style={s.between}>
+              <Text style={[s.small, s.grow]}>Finish signing in in the Facebook window.</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel="Cancel Facebook sign-in" testID="cancel-facebook" onPress={() => signIn.current?.abort()}
+                style={{ minHeight: 44, justifyContent: 'center' }}><Text style={[s.small, { color: colors.danger, fontFamily: fonts.semibold }]}>Cancel</Text></Pressable>
+            </View>}
+            <Text style={s.small}>Until Meta reviews this app, only people added to it as testers can sign in.</Text>
+          </>}
+      {facebookNote ? <Text testID="facebook-note" style={s.small}>{facebookNote}</Text> : null}
+    </View>
+
+    <View style={s.card}>
       <View style={[s.row, { alignItems: 'flex-start' }]}><View style={{ padding: 10, backgroundColor: eventsBlueLight, borderRadius: 12 }}><Icon name="film" color={eventsBlue} /></View>
         <View style={[s.grow, { gap: 4 }]}><Text style={s.label}>What Facebook shows you</Text>
           <Text style={s.small}>Facebook does not let apps read your Reels or watch history. Its “Your algorithm” page, in the three-dot menu on a post, is where you manage the topics you want in Feed and Reels. Share a screenshot of it and Muse Spark reads the topics.</Text></View></View>
@@ -325,7 +421,7 @@ export function SignalsScreen() {
     <View style={{ gap: 12 }}>
       <View style={s.between}>
         <View style={[s.row, { gap: 9, flexShrink: 1, flexWrap: 'wrap' }]}><Text style={s.heading}>Shared interests</Text>
-          {d.shared === 'sample' && <Tag tone="gray">SAMPLE</Tag>}{d.shared === 'screenshot' && <Tag>FROM SCREENSHOT</Tag>}</View>
+          {d.shared === 'sample' && <Tag tone="gray">SAMPLE</Tag>}{d.shared === 'screenshot' && <Tag>FROM SCREENSHOT</Tag>}{d.shared === 'facebook' && <Tag>FROM FACEBOOK</Tag>}</View>
         {d.interests.length > 0 && <Pressable accessibilityRole="button" accessibilityLabel="Clear all interests" testID="clear-signals" onPress={() => { clearSignals(); setNote(''); }}
           style={{ minHeight: 44, justifyContent: 'center' }}><Text style={[s.small, { color: colors.danger, fontFamily: fonts.semibold }]}>Clear</Text></Pressable>}
       </View>
@@ -340,7 +436,23 @@ export function SignalsScreen() {
       </View> : <Text style={s.muted}>Nothing shared yet.</Text>}
     </View>
 
+    <View style={s.card}>
+      <Pressable accessibilityRole="switch" aria-checked={matching} accessibilityLabel="Match me with people at events" testID="match-people"
+        disabled={matchSwitch.busy || session.muse === 'no-profile'} onPress={toggleMatching} style={[s.row, { alignItems: 'flex-start', minHeight: 44 }]}>
+        <View style={[s.grow, { gap: 4 }]}><Text style={s.label}>Match me with people at events</Text>
+          <Text style={s.small}>{session.muse === 'sample'
+            ? 'Shows what you share with the sample attendees in a Glance event. Nothing leaves this device in the walkthrough.'
+            : 'Saves the interests above to your Glance profile so Muse Spark can compare them with other people at your events who turned this on too. Each of you sees only what you share, in your own words. Turn it off to delete them.'}</Text></View>
+        <View style={{ width: 48, height: 28, borderRadius: 14, padding: 3, marginTop: 2, backgroundColor: matching ? eventsBlue : colors.line,
+          alignItems: matching ? 'flex-end' : 'flex-start', opacity: matchSwitch.busy ? 0.6 : 1 }}>
+          <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: colors.paper }} /></View>
+      </Pressable>
+      {session.muse === 'no-profile' ? <Text style={s.small}>Create your Glance profile first; matching is tied to it.</Text>
+        : matching ? <Text testID="match-people-on" style={[s.small, { color: colors.green }]}>{d.interests.length
+          ? 'On. Open one of your Glance events to see who shares your interests.' : 'On, but there is nothing to match yet. Add a few interests above.'}</Text> : null}
+    </View>
+
     <Button accent={eventsBlue} icon="zap" disabled={!hasSignals} testID="see-picks" onPress={() => router.push('/events')}>See my picks</Button>
-    <Text style={s.small}>A screenshot is sent to Meta’s Muse Spark model to read its topics, and Glance does not store it. Interests stay in memory on this device and are sent only to rank events. Sensitive topics such as health, religion and politics are left out. Concept demo; not affiliated with or endorsed by Meta.</Text>
+    <Text style={s.small}>Connecting Facebook reads the Pages you like and your recent posts once and sends them to Meta’s Muse Spark model to find interests; a screenshot is read the same way. Glance stores neither, and removes its access to your account after the read. Your interests stay in memory on this device and are sent only to rank events, unless you turn on people matching: then they are saved to your Glance profile until you turn it off, and other people see only what they share with you, in their own words. Muse Spark is asked to leave out sensitive topics such as health, religion and politics. Concept demo; not affiliated with or endorsed by Meta.</Text>
   </Page>;
 }

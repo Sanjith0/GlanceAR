@@ -183,7 +183,11 @@ export default function FaceCamera({ active, scopeId = 'live:camera', overlays, 
       const labelWidth = Math.min(Math.max(box.width, 190), view.width - 16);
       const labelLeft = Math.min(Math.max(box.x + box.width / 2 - labelWidth / 2, 8), view.width - labelWidth - 8);
       // Below the face if it fits, else above, else pinned inside the frame (over the face).
-      const labelHeight = 35 + (overlay.detail ? 17 : 0) + (overlay.points?.length ?? 0) * 36;
+      // A talking point is at least two lines tall; a longer one (an opener) is sized by its length,
+      // at roughly 6.3px per character of 12px Inter, so the label is still placed where it fits.
+      const perLine = Math.max(Math.floor((labelWidth - 20) / 6.3), 12);
+      const labelHeight = 35 + (overlay.detail ? 17 : 0)
+        + (overlay.points ?? []).reduce((sum, point) => sum + Math.max(2, Math.ceil((point.length + 2) / perLine)) * 17 + 2, 0);
       const below = box.y + box.height + 6, above = box.y - 6 - labelHeight;
       const labelTop = below + labelHeight <= view.height - 8 ? below
         : above >= 8 ? above : Math.max(view.height - labelHeight - 8, 8);

@@ -118,25 +118,34 @@ EXPO_NO_DOTENV=1 EXPO_PUBLIC_CONVEX_URL= EXPO_PUBLIC_DEMO_SUMMARY_URL=http://127
 
 ## Events view (Discover with Muse Spark)
 
-The header switch **Glance | Events** turns the same app into an events product in the style of Luma and Partiful: a Discover page, event pages with RSVPs, a Going tab and a Signals tab. It is a concept demo for the Meta track: what a Facebook-native events surface could recommend when the person shares what they are into. Code lives in `src/discover/`, `convex/discover.ts` and `convex/discoverData.ts`.
+The header switch **Glance | Events** turns the same app into an events product in the style of Luma and Partiful: a Discover page, event pages with RSVPs, a Going tab and a Signals tab. It is a concept demo for the Meta track: what a Facebook-native events surface could recommend when the person shares what they are into. Code lives in `src/discover/` and, on the backend, `convex/discover.ts`, `convex/discoverData.ts`, `convex/facebook.ts`, `convex/facebookGraph.ts`, `convex/people.ts`, `convex/peopleData.ts` and `convex/peopleView.ts`.
 
 - **Catalog:** 20 fictional Dallas–Fort Worth events (`src/discover/catalog.ts`), labelled SAMPLE EVENTS. There is no real listings source yet.
-- **Signals:** typed interests, your Glance intro, sample signals, or a screenshot of Facebook's **Your algorithm** page, which Muse Spark vision turns into editable interest chips. Facebook gives apps no access to Reels or watch history, so the screenshot is the consented substitute; nothing is read from a Facebook account.
+- **Signals:** typed interests, your Glance intro, sample signals, **Connect Facebook**, or a screenshot of Facebook's **Your algorithm** page, which Muse Spark vision turns into editable interest chips. Every interest is a removable chip before it is used.
+- **Connect Facebook (web only):** a pop-up Facebook Login asks for two permissions, `user_likes` and `user_posts`. The backend reads the Pages you like and your recent posts once, removes Glance's own access (`DELETE /me/permissions`), then has `muse-spark-1.3` turn what it read into interests. The access token is never stored and nothing from Facebook is written to the database. Facebook gives apps no access to Reels, watch or browsing history, so those are never read; the screenshot is the consented substitute for them.
 - **Ranking:** `discover.recommend` sends the shared interests and the catalog to `muse-spark-1.3` (`POST /v1/chat/completions`, strict JSON schema) and returns up to six picks with a reason each. It needs `META_API_KEY` on the Convex deployment and a registered profile. Each profile gets 40 Muse-backed calls per UTC day.
 - **Fallback is labelled:** with no backend, no profile or a Meta failure, picks come from a keyword match shown as BASIC MATCH with the reason. It is never presented as Muse.
-- **Not stored:** interests, picks, RSVPs and the screenshot are not written to the database; only the daily usage counter is. Everything else is in memory and is gone on reload.
+- **People matching (opt-in):** the switch **Match me with people at events** on Signals saves your interest list to your profile. In a Glance event, each person who also switched it on shows the interests the two of you share, in your own words, plus one question to open with, and whoever shares the most comes first. `people.match` makes two Muse calls: one finds semantic pairs between the two lists (each pair is checked against the real lists), the other writes openers from the confirmed overlap only. LIVE Camera leads its talking points with the same overlap. Each profile gets 40 people-matching calls per UTC day.
+- **What other people can learn:** only the overlap, and only in their own wording. Another person's phrasing, the rest of their list and its length never reach your device. Two limits to know: someone could probe a list by re-saving their own with different guesses (there is no rate limit on saving yet), and an empty overlap that Muse has already judged hints that there is nothing in common.
+- **Stored:** picks, RSVPs, the screenshot and everything read from Facebook are never written to the database. Interests stay in memory on the device unless people matching is on; then the list is stored with the profile until the switch is turned off, and match results are kept for at most 24 hours. A web session keeps its device credential in memory only, so a closed tab can no longer turn the switch off: its saved list stays with that profile, like the profile itself. The daily usage counter is stored as before.
 
 ```sh
-# Backend: deploys the two new actions and the discoverUsage table (keep it running)
+# Backend: deploys the Discover, Facebook and people-matching functions and their tables (keep it running)
 npx convex dev
 npx convex env set META_API_KEY   # paste the key when prompted; server-side only
+
+# Connect Facebook: your own Meta app with the Facebook Login product (see below)
+npx convex env set FACEBOOK_APP_ID       # the numeric app ID
+npx convex env set FACEBOOK_APP_SECRET   # paste when prompted; server-side only
 
 # Testing without a key: point the deployment at your own local mock of /v1/chat/completions.
 # Unset it before using a real key.
 npx convex env set META_API_BASE_URL http://127.0.0.1:9911
 ```
 
-Verified so far only in Chromium and only against a local stand-in for Meta's API; see [the flow record](FLOWS.md) for what was and was not checked. Not affiliated with or endorsed by Meta.
+**Setting up Connect Facebook.** Create an app at developers.facebook.com, add the Facebook Login product, and list the exact address the web app is served from (for example `https://glancear.vercel.app/`) under **Valid OAuth Redirect URIs**; Facebook requires HTTPS and an exact match, and that list is the only gate on where a sign-in can return to. Until the app passes App Review for `user_likes` and `user_posts`, only people with a role on the app (admin, developer or tester) can sign in. `FACEBOOK_GRAPH_VERSION` is optional and defaults to `v27.0`. Sign-in opens a browser pop-up, so it is offered on the web build only; the native app says so instead of showing the button.
+
+Verified so far only in Chromium and only against local stand-ins for Facebook Login, the Graph API and Meta's model API; no request has been made to Facebook or Meta from this feature. See [the flow record](FLOWS.md) for what was and was not checked. Not affiliated with or endorsed by Meta.
 
 ## Live hand-gesture finish
 

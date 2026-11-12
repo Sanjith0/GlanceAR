@@ -8,6 +8,8 @@ import { colors, fonts, s } from './theme';
 import { deploymentURL, useGlance } from './state';
 import { isAudioCaptureAvailable } from './capture/audio';
 import { ModeSwitch } from './discover/ModeSwitch';
+import { MatchStatus, SharedWith, byShared, useAutoMatch } from './discover/PeopleMatch';
+import { matchPeople } from './discover/api';
 const firstName = (name: string) => name.split(' ')[0];
 import { samplePeople } from './demo';
 import type { Conversation, Profile } from './domain';
@@ -191,7 +193,11 @@ export function EventScreen() {
   const selected = app.snapshot?.event?.id === id;
   const eventMembers = app.snapshot?.members;
   const meId = app.snapshot?.me.id;
-  const members = useMemo(() => selected ? eventMembers?.filter(p => p.id !== meId) ?? [] : [], [selected, eventMembers, meId]);
+  // People matching: whoever shares the most with you comes first.
+  const members = useMemo(() => selected ? byShared(eventMembers?.filter(p => p.id !== meId) ?? []) : [], [selected, eventMembers, meId]);
+  const matching = selected ? app.snapshot?.matching : undefined;
+  useAutoMatch(deploymentURL, app.token, id, app.mode === 'live' && focused && selected && Boolean(matching?.stale));
+  const [rematching, setRematching] = useState(false);
   const enabled = selected && Boolean(app.snapshot?.eventPermission?.enabled);
   const active = app.snapshot?.conversations.find(c => c.eventId === id && c.consentMode === 'event' && ['consent', 'recording'].includes(c.status));
   const source = active && active.recorderId === meId ? active.captureSource ?? 'phone' : app.captureSource;
@@ -238,6 +244,10 @@ export function EventScreen() {
     if (generation !== entryGeneration.current) return;
     await app.setEventPermission(id, true);
   };
+  const rematch = () => {
+    setRematching(true);
+    void run(() => matchPeople(deploymentURL, token, id, true)).catch(() => {}).finally(() => setRematching(false));
+  };
   return <Page back title="Your event">
     <DemoBanner /><GlobalStatus />
     {event ? <>
@@ -268,7 +278,10 @@ export function EventScreen() {
       <View style={s.divider} />
       <Text style={s.heading}>People in the room</Text>
       <Text style={s.muted}>{app.mode === 'demo' ? 'Nothing starts on its own. Open LIVE Camera and hold two registered faces in view for the 3-2-1, or use Simulate next encounter below.' : 'Open LIVE Camera to recognize attendees who added a face scan. Selecting a profile below remains the fallback.'}</Text>
+      {selected && <MatchStatus mine={app.snapshot?.me.interests} matching={matching} others={members} sample={app.mode === 'demo'}
+        refreshing={rematching} onRefresh={app.mode === 'live' && matching ? rematch : undefined} />}
       {members.map(person => <View key={person.id} style={s.card}><PersonRow person={person} label={person.glanceEnabled ? 'Glance enabled for this event' : 'Glance is paused'} />
+        <SharedWith person={person} />
         <Button busy={busy} disabled={!enabled || !person.glanceEnabled || !captureReady || (app.mode === 'live' && Platform.OS === 'web')}
           tone="secondary" icon="message-circle" onPress={() => void perform(() => pair(person.id))}>{app.mode === 'demo' ? 'Simulate next encounter' : `Pair with ${person.name.split(' ')[0]}`}</Button>
       </View>)}

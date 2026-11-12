@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import { internalMutation, internalQuery, type Doc, type QueryCtx } from "./server";
 import { participants, purgeAudio, clearPresenceTickets, clearMessages, currentEventGrants, revokeEventConversations } from "./glance";
 import { recapValidator } from "./schema";
+import { PEOPLE_MATCH_RETENTION_MS } from "./peopleData";
 import { MAX_RECORDING_MS, RAW_AUDIO_RETENTION_MS, SIGHTING_WINDOW_MS } from "../src/domain";
 
 const jobArgs = { conversationId: v.id("conversations"), generation: v.number() };
@@ -102,6 +103,14 @@ export const sweep = internalMutation({
       .withIndex("by_seen_at", (q) => q.lt("seenAt", Date.now() - SIGHTING_WINDOW_MS)).take(100);
     for (const sighting of sightings) await ctx.db.delete(sighting._id);
     if (sightings.length === 100) await ctx.scheduler.runAfter(0, anyApi.jobs.sweep, {});
+    // Abandoned Facebook sign-ins and day-old people matches are not kept.
+    const states = await ctx.db.query("facebookStates")
+      .withIndex("by_expiry", (q) => q.lte("expiresAt", Date.now())).take(100);
+    for (const state of states) await ctx.db.delete(state._id);
+    const matches = await ctx.db.query("peopleMatches")
+      .withIndex("by_updated", (q) => q.lt("updatedAt", Date.now() - PEOPLE_MATCH_RETENTION_MS)).take(100);
+    for (const match of matches) await ctx.db.delete(match._id);
+    if (states.length === 100 || matches.length === 100) await ctx.scheduler.runAfter(0, anyApi.jobs.sweep, {});
     // Uploaded but unattached objects are swept too. No storage download URLs are public.
     const files = await ctx.db.system.query("_storage")
       .withIndex("by_creation_time", (q) => q.lt("_creationTime", Date.now() - RAW_AUDIO_RETENTION_MS))
