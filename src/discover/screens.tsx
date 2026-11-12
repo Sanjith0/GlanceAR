@@ -135,7 +135,7 @@ export function DiscoverScreen() {
     <View style={[s.row, s.input, { paddingVertical: 0, gap: 10 }]}>
       <Icon name="search" size={18} color={colors.muted} />
       <TextInput accessibilityLabel="Search events" value={query} onChangeText={setQuery} placeholder="Search events, places or interests"
-        placeholderTextColor={colors.muted} autoCorrect={false} style={[s.grow, { minHeight: 50, color: colors.ink, fontFamily: fonts.body, fontSize: 15 }]} />
+        placeholderTextColor={colors.muted} autoCorrect={false} style={[s.grow, { minWidth: 0, minHeight: 50, color: colors.ink, fontFamily: fonts.body, fontSize: 15 }]} />
       {query ? <Pressable accessibilityRole="button" accessibilityLabel="Clear search" onPress={() => setQuery('')} hitSlop={10}><Icon name="x" size={18} color={colors.muted} /></Pressable> : null}
     </View>
     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -24, flexGrow: 0 }} contentContainerStyle={{ paddingHorizontal: 24 }}>
@@ -313,7 +313,7 @@ export function SignalsScreen() {
       <Text style={s.label}>Add your own</Text>
       <View style={[s.row, { gap: 10 }]}>
         <TextInput accessibilityLabel="Interests to add" value={draft} onChangeText={setDraft} onSubmitEditing={addTyped} returnKeyType="done"
-          placeholder="climbing, espresso, live jazz" placeholderTextColor={colors.muted} maxLength={200} autoCorrect={false} style={[s.input, s.grow]} />
+          placeholder="climbing, espresso" placeholderTextColor={colors.muted} maxLength={200} autoCorrect={false} style={[s.input, s.grow, { minWidth: 0 }]} />
         <Pressable accessibilityRole="button" accessibilityLabel="Add interests" testID="add-interests" onPress={addTyped} disabled={!draft.trim()}
           style={({ pressed }) => [{ width: 52, height: 52, borderRadius: 14, alignItems: 'center', justifyContent: 'center',
             backgroundColor: draft.trim() ? eventsBlue : colors.canvas, borderWidth: draft.trim() ? 0 : 1, borderColor: colors.line }, pressed && s.pressed]}>

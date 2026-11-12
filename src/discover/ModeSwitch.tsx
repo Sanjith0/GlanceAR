@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, Text, View, useWindowDimensions } from 'react-native';
 import { colors, fonts, s } from '../theme';
 import { setUi, useDiscover, type UiMode } from './store';
 
@@ -15,12 +15,14 @@ const MODES: readonly { mode: UiMode; label: string; hint: string }[] = [
 /** Switches the whole app between the usual Glance UI and the Events (Discover) UI. */
 export function ModeSwitch() {
   const { ui } = useDiscover();
+  // Below 360px the wordmark, switch and avatar no longer fit on one row at full padding.
+  const compact = useWindowDimensions().width < 360;
   return <View accessibilityRole="tablist" accessibilityLabel="App view" style={{ flexDirection: 'row', backgroundColor: colors.canvas, borderRadius: 14, padding: 3, borderWidth: 1, borderColor: colors.line }}>
     {MODES.map(({ mode, label, hint }) => {
       const selected = ui === mode;
       return <Pressable key={mode} testID={`ui-mode-${mode}`} accessibilityRole="tab" accessibilityLabel={hint}
         aria-selected={selected} onPress={() => setUi(mode)}
-        style={({ pressed }) => [{ minHeight: 38, paddingHorizontal: 14, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+        style={({ pressed }) => [{ minHeight: 38, paddingHorizontal: compact ? 8 : 14, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
           selected && { backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line }, pressed && s.pressed]}>
         <Text style={{ fontFamily: fonts.semibold, fontSize: 13, lineHeight: 18, color: selected ? (mode === 'events' ? eventsBlue : colors.ink) : colors.muted }}>{label}</Text>
       </Pressable>;
