@@ -7,6 +7,7 @@ import { Badge, Button, Empty, Field, Icon, Notice, Page, Portrait, Wordmark } f
 import { colors, fonts, s } from './theme';
 import { deploymentURL, useGlance } from './state';
 import { isAudioCaptureAvailable } from './capture/audio';
+import { ModeSwitch } from './discover/ModeSwitch';
 const firstName = (name: string) => name.split(' ')[0];
 import { samplePeople } from './demo';
 import type { Conversation, Profile } from './domain';
@@ -117,7 +118,7 @@ export function EventsScreen() {
   const openEvent = (id: string) => { app.selectEvent(id); router.push(`/event/${id}`); };
   const active = app.snapshot?.conversations.filter(c => !c.connectedAt && ['consent', 'recording'].includes(c.status)) ?? [];
   return <Page>
-    <View style={s.between}><Wordmark /><Pressable accessibilityRole="button" accessibilityLabel="Open your profile" onPress={() => router.push('/profile')}>
+    <View style={s.between}><Wordmark /><ModeSwitch /><Pressable accessibilityRole="button" accessibilityLabel="Open your profile" onPress={() => router.push('/profile')}>
       {app.snapshot ? <Portrait person={app.snapshot.me} size={40} /> : <Icon name="user" />}</Pressable></View>
     <View style={{ gap: 10, paddingTop: 12, paddingBottom: 4 }}>
       <Text style={[s.title, { fontSize: 36, lineHeight: 43, letterSpacing: -1.4 }]}>Be here.{'\n'}Remember later.</Text>

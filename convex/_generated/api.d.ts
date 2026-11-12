@@ -11,6 +11,8 @@
 import type * as crons from "../crons.js";
 import type * as demoAudio from "../demoAudio.js";
 import type * as demoSummary from "../demoSummary.js";
+import type * as discover from "../discover.js";
+import type * as discoverData from "../discoverData.js";
 import type * as glance from "../glance.js";
 import type * as jobs from "../jobs.js";
 import type * as meta from "../meta.js";
@@ -28,6 +30,8 @@ declare const fullApi: ApiFromModules<{
   crons: typeof crons;
   demoAudio: typeof demoAudio;
   demoSummary: typeof demoSummary;
+  discover: typeof discover;
+  discoverData: typeof discoverData;
   glance: typeof glance;
   jobs: typeof jobs;
   meta: typeof meta;

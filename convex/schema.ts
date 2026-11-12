@@ -116,4 +116,11 @@ export default defineSchema({
     .index("by_pair", ["conversationId", "profileId"])
     .index("by_conversation", ["conversationId"])
     .index("by_expiry", ["expiresAt"]),
+  // Events (Discover) mode: a per-profile daily counter that caps Muse calls.
+  // Interests, screenshots and picks are never stored.
+  discoverUsage: defineTable({
+    profileId: v.id("profiles"),
+    day: v.string(),
+    count: v.number(),
+  }).index("by_profile_day", ["profileId", "day"]),
 });

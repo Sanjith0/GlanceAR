@@ -10,18 +10,20 @@ export function Icon({ name, size = 20, color = colors.ink }: { name: IconName; 
   return <Feather name={name} size={size} color={color} accessible={false} aria-hidden={true}
     accessibilityElementsHidden importantForAccessibility="no-hide-descendants" />;
 }
-export function Button({ children, onPress, icon, tone = 'primary', disabled = false, busy = false, testID }: {
+export function Button({ children, onPress, icon, tone = 'primary', disabled = false, busy = false, testID, accent }: {
   children: string; onPress: () => void; icon?: IconName; tone?: 'primary' | 'secondary' | 'ghost' | 'danger';
   disabled?: boolean; busy?: boolean; testID?: string;
+  /** Replaces the brand blue on primary and secondary buttons (the Events face uses its own). */
+  accent?: string;
 }) {
   const background = tone === 'secondary' ? s.secondary : tone === 'ghost' ? s.ghost : tone === 'danger' ? s.danger : undefined;
   const text = tone === 'secondary' ? s.secondaryText : tone === 'ghost' ? s.ghostText : tone === 'danger' ? s.dangerText : undefined;
-  const color = disabled || busy ? colors.muted : tone === 'primary' ? colors.paper : tone === 'secondary' ? colors.blue : tone === 'danger' ? colors.danger : colors.ink;
+  const color = disabled || busy ? colors.muted : tone === 'primary' ? colors.paper : tone === 'secondary' ? accent ?? colors.blue : tone === 'danger' ? colors.danger : colors.ink;
   return <Pressable accessibilityRole="button" accessibilityLabel={children} accessibilityState={{ disabled: disabled || busy }}
     testID={testID} disabled={disabled || busy} onPress={onPress}
-    style={({ pressed }) => [s.button, background, (disabled || busy) && s.disabled, pressed && s.pressed]}>
+    style={({ pressed }) => [s.button, background, accent && tone === 'primary' ? { backgroundColor: accent } : null, (disabled || busy) && s.disabled, pressed && s.pressed]}>
     {busy ? <ActivityIndicator color={color} size="small" /> : icon ? <Icon name={icon} size={18} color={color} /> : null}
-    <Text style={[s.buttonText, text, (disabled || busy) && { color: colors.muted }]}>{children}</Text>
+    <Text style={[s.buttonText, text, accent && tone === 'secondary' ? { color: accent } : null, (disabled || busy) && { color: colors.muted }]}>{children}</Text>
   </Pressable>;
 }
 export function Portrait({ person, size = 52 }: { person: Profile; size?: number }) {

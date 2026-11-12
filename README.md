@@ -116,6 +116,28 @@ EXPO_NO_DOTENV=1 EXPO_PUBLIC_CONVEX_URL= EXPO_PUBLIC_DEMO_SUMMARY_URL=http://127
 - **Failure messages are specific:** a rejected key, rate limit, refused recording or unreachable Meta each get their own message, and the backend logs only a code such as `ASR_HTTP_401`, never the provider's response or your key.
 - **Live mode** uses the same shared Meta code (`convex/meta.ts`): its recap is written from the speaker-labelled transcript, and live chats show the same anonymous transcript behind Show transcript.
 
+## Events view (Discover with Muse Spark)
+
+The header switch **Glance | Events** turns the same app into an events product in the style of Luma and Partiful: a Discover page, event pages with RSVPs, a Going tab and a Signals tab. It is a concept demo for the Meta track: what a Facebook-native events surface could recommend when the person shares what they are into. Code lives in `src/discover/`, `convex/discover.ts` and `convex/discoverData.ts`.
+
+- **Catalog:** 20 fictional Dallas–Fort Worth events (`src/discover/catalog.ts`), labelled SAMPLE EVENTS. There is no real listings source yet.
+- **Signals:** typed interests, your Glance intro, sample signals, or a screenshot of Facebook's **Your algorithm** page, which Muse Spark vision turns into editable interest chips. Facebook gives apps no access to Reels or watch history, so the screenshot is the consented substitute; nothing is read from a Facebook account.
+- **Ranking:** `discover.recommend` sends the shared interests and the catalog to `muse-spark-1.3` (`POST /v1/chat/completions`, strict JSON schema) and returns up to six picks with a reason each. It needs `META_API_KEY` on the Convex deployment and a registered profile. Each profile gets 40 Muse-backed calls per UTC day.
+- **Fallback is labelled:** with no backend, no profile or a Meta failure, picks come from a keyword match shown as BASIC MATCH with the reason. It is never presented as Muse.
+- **Not stored:** interests, picks, RSVPs and the screenshot are not written to the database; only the daily usage counter is. Everything else is in memory and is gone on reload.
+
+```sh
+# Backend: deploys the two new actions and the discoverUsage table (keep it running)
+npx convex dev
+npx convex env set META_API_KEY   # paste the key when prompted; server-side only
+
+# Testing without a key: point the deployment at your own local mock of /v1/chat/completions.
+# Unset it before using a real key.
+npx convex env set META_API_BASE_URL http://127.0.0.1:9911
+```
+
+Verified so far only in Chromium and only against a local stand-in for Meta's API; see [the flow record](FLOWS.md) for what was and was not checked. Not affiliated with or endorsed by Meta.
+
 ## Live hand-gesture finish
 
 See [the implementation and verification guide](docs/LIVE-GESTURE.md) for camera transfer, gesture geometry, the green acknowledgment, model preparation, and what has and has not been tested. The hand changes do not modify face matching, account permissions, the backend schema, or the audio controller.
