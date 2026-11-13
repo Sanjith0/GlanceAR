@@ -4,6 +4,9 @@ export const colors = {
   ink: '#0B1B3A', muted: '#5C6B80', blue: '#2468DD', blueLight: '#EAF2FF',
   line: '#DFE6F0', paper: '#FFFFFF', canvas: '#F4F7FC', green: '#146B55',
   greenLight: '#E8F5EF', danger: '#AD3046', dangerLight: '#FBECEF',
+  orange: '#9A4B00', orangeLight: '#FFEBD1',
+  /** Light blue marker behind the things two people have in common. */
+  highlight: '#CFE2FF',
 };
 export const fonts = {
   body: 'Inter_400Regular', medium: 'Inter_500Medium',

@@ -10,6 +10,7 @@ import { isAudioCaptureAvailable } from './capture/audio';
 import { ModeSwitch } from './discover/ModeSwitch';
 import { MatchStatus, SharedWith, byShared, useAutoMatch } from './discover/PeopleMatch';
 import { matchPeople } from './discover/api';
+import { MatchName } from './PersonCards';
 const firstName = (name: string) => name.split(' ')[0];
 import { samplePeople } from './demo';
 import type { Conversation, Profile } from './domain';
@@ -77,9 +78,9 @@ export function DemoBanner({ actors = false }: { actors?: boolean }) {
     </View>}
   </View>;
 }
-function PersonRow({ person, approved, label }: { person: Profile; approved?: boolean; label?: string }) {
+function PersonRow({ person, approved, label, matchColor }: { person: Profile; approved?: boolean; label?: string; matchColor?: boolean }) {
   return <View style={s.row}><Portrait person={person} /><View style={s.grow}>
-    <Text style={s.label}>{person.name}</Text><Text style={s.small}>{label ?? person.role}</Text>
+    {matchColor ? <MatchName person={person} /> : <Text style={s.label}>{person.name}</Text>}<Text style={s.small}>{label ?? person.role}</Text>
   </View>{approved !== undefined && <Icon name={approved ? 'check-circle' : 'circle'} size={21} color={approved ? colors.green : colors.line} />}</View>;
 }
 function ConversationLink({ conversation }: { conversation: Conversation }) {
@@ -280,7 +281,7 @@ export function EventScreen() {
       <Text style={s.muted}>{app.mode === 'demo' ? 'Nothing starts on its own. Open LIVE Camera and hold two registered faces in view for the 3-2-1, or use Simulate next encounter below.' : 'Open LIVE Camera to recognize attendees who added a face scan. Selecting a profile below remains the fallback.'}</Text>
       {selected && <MatchStatus mine={app.snapshot?.me.interests} matching={matching} others={members} sample={app.mode === 'demo'}
         refreshing={rematching} onRefresh={app.mode === 'live' && matching ? rematch : undefined} />}
-      {members.map(person => <View key={person.id} style={s.card}><PersonRow person={person} label={person.glanceEnabled ? 'Glance enabled for this event' : 'Glance is paused'} />
+      {members.map(person => <View key={person.id} style={s.card}><PersonRow matchColor person={person} label={person.glanceEnabled ? 'Glance enabled for this event' : 'Glance is paused'} />
         <SharedWith person={person} />
         <Button busy={busy} disabled={!enabled || !person.glanceEnabled || !captureReady || (app.mode === 'live' && Platform.OS === 'web')}
           tone="secondary" icon="message-circle" onPress={() => void perform(() => pair(person.id))}>{app.mode === 'demo' ? 'Simulate next encounter' : `Pair with ${person.name.split(' ')[0]}`}</Button>

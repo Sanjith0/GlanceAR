@@ -8,6 +8,17 @@ function words(text: string): string[] {
 
 const list = (items: string[]) => (items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`);
 
+/** Words both one-line introductions mention. */
+function sharedRoleWords(me: Pick<Profile, 'role'> | undefined, them: Pick<Profile, 'role'>): string[] {
+  const mine = new Set(words(me?.role ?? ''));
+  return [...new Set(words(them.role))].filter(w => mine.has(w));
+}
+
+/** Everything the two of you have in common, to highlight: shared interests, then shared role words. */
+export function commonTraits(me: Pick<Profile, 'role'> | undefined, them: Pick<Profile, 'role' | 'shared'>): string[] {
+  return [...new Set([...(them.shared ?? []), ...sharedRoleWords(me, them)])];
+}
+
 /**
  * Up to three conversation starters. When people matching found interests the two
  * of you share, those and their opener lead; the rest come from both one-line
@@ -21,8 +32,7 @@ export function talkingPoints(
     points.push(`You’re both into ${list(them.shared.slice(0, 3))}`);
     if (them.opener) points.push(them.opener);
   }
-  const mine = new Set(words(me?.role ?? ''));
-  const shared = [...new Set(words(them.role))].filter(w => mine.has(w));
+  const shared = sharedRoleWords(me, them);
   if (shared.length) points.push(`You both mention ${shared.slice(0, 2).join(' and ')}`);
   for (const part of them.role.split(/[·|,;/]|\s+and\s+/).map(p => p.trim()).filter(Boolean).slice(0, 2)) {
     if (/^[A-Za-z-]+$/.test(part)) {

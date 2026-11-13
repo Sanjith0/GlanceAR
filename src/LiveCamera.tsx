@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { AccessibilityInfo, Animated, Easing, Platform, Text, View, useWindowDimensions } from 'react-native';
+import { AccessibilityInfo, Animated, Easing, Platform, Pressable, Text, View, useWindowDimensions } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Badge, Button, Empty, Icon, Notice, Page, Portrait } from './components';
 import { colors, fonts, s } from './theme';
@@ -14,6 +14,8 @@ import { inFinalStretch, LIVE_RECOGNITION_FLASH_MS, LIVE_RECOGNITION_HOLD_MS, Re
 import { RecognitionScope } from './recognitionScope';
 import { glassesShellAvailable, setCameraDevice, useCameraDevice } from './capture/glassesBridge';
 import { CameraPicker } from './CameraPicker';
+import { PersonCardView } from './PersonCards';
+import { PeopleCardTracker, type PersonCard } from './peopleCards';
 
 const firstName = (name: string) => name.split(' ')[0];
 const LIVE_HOLD_LOST_MS = 4_000;
@@ -87,6 +89,10 @@ export function LiveCameraScreen() {
   const reports = useRef(new Map<string, number>());
   const inFlight = useRef(new Set<string>());
   const [overlays, setOverlays] = useState<FaceOverlay[]>([]);
+  // Meta glasses: a card for everyone looked at for a moment, kept for a while after they leave view.
+  const cardTracker = useRef(new PeopleCardTracker());
+  const [cards, setCards] = useState<PersonCard[]>([]);
+  const [videoMinimized, setVideoMinimized] = useState(false);
   const [pairing, setPairing] = useState<Record<string, string>>({});
   const countdown = useRef(new RecognitionCountdown(LIVE_RECOGNITION_HOLD_MS));
   const scope = useRef(new RecognitionScope());
@@ -119,6 +125,8 @@ export function LiveCameraScreen() {
     liveHeld.current = null;
     setLiveHeldId(null);
     setOverlays([]);
+    cardTracker.current.reset();
+    setCards([]);
   }, [publishCountdown, setDemoPairPending, setAuthorizedConversation]);
 
   const resetCountdown = useCallback(() => {
@@ -174,6 +182,17 @@ export function LiveCameraScreen() {
     }, 100);
     return () => clearInterval(timer);
   }, [app.mode, focused, enabled, publishCountdown]);
+
+  // Keeps the glasses cards honest as time passes: they expire without needing another frame.
+  const glassesMode = cameraDevice === 'glasses';
+  useEffect(() => {
+    if (!glassesMode || !focused || !enabled) return;
+    const timer = setInterval(() => {
+      const next = cardTracker.current.cards(performance.now());
+      setCards(old => old.length === 0 && next.length === 0 ? old : next);
+    }, 250);
+    return () => { clearInterval(timer); };
+  }, [glassesMode, focused, enabled]);
 
   const authorizedGeneration = authorizedConversation?.generation;
   const targetConversationId = app.mode === 'live' ? active?.id
@@ -244,13 +263,18 @@ export function LiveCameraScreen() {
     const results = frame.faces.map(face => ({ face, match: face.descriptor ? matchDescriptor(face.descriptor, templates) : null }));
     const stable = tracker.current.observe(results.flatMap(({ match }) =>
       match && match.profileId !== me?.id && people.has(match.profileId) ? [match.profileId] : []), now);
+    if (wearingGlasses.current) {
+      cardTracker.current.observe(results.flatMap(({ match }) =>
+        match && match.profileId !== me?.id && people.has(match.profileId) ? [match.profileId] : []), performance.now());
+    }
     setOverlays(results.map(({ face, match }, i): FaceOverlay => {
       const person = match ? people.get(match.profileId) : undefined;
       if (person && person.id === me?.id) return { key: `self-${i}`, box: face.box, tone: 'self', title: 'You' };
       if (person) return {
         key: `${person.id}-${i}`, box: face.box, tone: 'match', title: person.name,
         detail: pairing[person.id] ?? (stable.includes(person.id) ? 'Recognized' : 'Recognizing…'),
-        points: talkingPoints(me, person, event?.title),
+        // With the glasses the talking points live on cards below, not over the video.
+        points: wearingGlasses.current ? undefined : talkingPoints(me, person, event?.title),
       };
       return { key: `face-${i}`, box: face.box, tone: 'unknown', title: face.descriptor ? 'Not registered' : 'Move closer to recognize' };
     }));
@@ -304,6 +328,7 @@ export function LiveCameraScreen() {
   // A 4:3 landscape window, as large as the column allows while the countdown card stays on screen.
   const cameraWidth = Math.max(240, Math.min(Math.min(width, 520) - 48, (height - 410) * 4 / 3));
   const cameraSize = { width: cameraWidth, height: cameraWidth * 3 / 4 };
+  const videoSize = glassesMode && videoMinimized ? { width: 120, height: 90 } : cameraSize;
   return <Page back title="LIVE Camera">
     <DemoBanner /><GlobalStatus />
     {!event ? !app.loading && <Empty icon="calendar" title="Event unavailable" text="Go back to your events, or join with an invitation code." />
@@ -379,11 +404,32 @@ export function LiveCameraScreen() {
         </View>
         {glassesShellAvailable() && <CameraPicker value={cameraDevice} onChange={device => { resetCountdown(); setCameraDevice(device); }}
           note="Look at the person you want to meet. The glasses see what you see." />}
-        <View style={[cameraSize, { alignSelf: 'center', borderRadius: 20, overflow: 'hidden' }]}>
+        {glassesMode && <View style={s.between}>
+          <Text style={[s.small, s.grow]}>{videoMinimized ? 'Video minimized. Glance is still recognizing people.' : 'Live video from your glasses'}</Text>
+          <Pressable testID="toggle-glasses-video" accessibilityRole="button"
+            accessibilityLabel={videoMinimized ? 'Show the live video' : 'Minimize the live video'}
+            onPress={() => setVideoMinimized(value => !value)} hitSlop={8}
+            style={[s.row, { gap: 6, minHeight: 44, paddingHorizontal: 12, borderRadius: 12, backgroundColor: colors.blueLight }]}>
+            <Icon name={videoMinimized ? 'maximize-2' : 'minimize-2'} size={16} color={colors.blue} />
+            <Text style={{ color: colors.blue, fontFamily: fonts.semibold, fontSize: 13 }}>{videoMinimized ? 'Show video' : 'Minimize'}</Text>
+          </Pressable>
+        </View>}
+        {/* Minimizing only shrinks the view; the camera keeps running so recognition continues. */}
+        <View style={[videoSize, { alignSelf: glassesMode && videoMinimized ? 'flex-start' : 'center', borderRadius: 20, overflow: 'hidden' }]}>
           <FaceCamera active={cameraActive} scopeId={`live:${id}:${app.mode}:${me?.id ?? 'unregistered'}`} device={cameraDevice}
-            overlays={overlays} onFrame={onFrame} onCameraReset={resetCountdown} style={cameraSize} />
-          {flashing && <ConnectingFlash />}
+            overlays={glassesMode && videoMinimized ? [] : overlays} onFrame={onFrame} onCameraReset={resetCountdown} style={videoSize} />
+          {flashing && !(glassesMode && videoMinimized) && <ConnectingFlash />}
         </View>
+        {glassesMode && <View testID="person-cards" style={{ gap: 10 }}>
+          {cards.map(card => {
+            const person = people.get(card.id);
+            return person ? <PersonCardView key={card.id} person={person} me={me} eventTitle={event?.title}
+              inView={card.inView} remaining={card.remaining}
+              canStart={Boolean(person.glanceEnabled) && !active}
+              starting={demoPairPending} onStart={() => pairAfterHold(person.id)} /> : null;
+          })}
+          {cards.length === 0 && <Text style={s.small}>Look at someone for a second and a card with what to talk about appears here. It stays for ten seconds after they leave your view.</Text>}
+        </View>}
         {notice ? <Notice>{notice}</Notice> : null}
         {syncError ? <Notice error>{`Face database sync failed: ${syncError}`}</Notice> : null}
         {app.mode === 'live' && directory && !directory.scanned && <Notice>Register your own face first. Others can only recognize you, and a conversation can only start, once you have a scan.</Notice>}
