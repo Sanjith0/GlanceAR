@@ -3,6 +3,7 @@ import { convexTest } from "convex-test";
 import { anyApi } from "convex/server";
 import schema from "../convex/schema";
 import { validateRecap, validateWav } from "../convex/validation";
+import { RECORDING_FRESHNESS_MS } from "../src/domain";
 
 const modules = {
   "../convex/_generated/server.ts": () => import("../convex/server"),
@@ -130,7 +131,7 @@ describe("independent consent and fail-closed recording", () => {
     await bothPresent(t, s.conversationId);
     const lease = await t.mutation(api.startRecording, args);
     expect(lease.leaseUntil - lease.serverNow).toBeGreaterThan(0);
-    expect(lease.leaseUntil - lease.serverNow).toBeLessThanOrEqual(5000);
+    expect(lease.leaseUntil - lease.serverNow).toBeLessThanOrEqual(RECORDING_FRESHNESS_MS);
   });
   it("bounds total freshness by the other phone, without a second five-second grace", async () => {
     const t = makeTest(); const s = await setup(t);
@@ -150,7 +151,7 @@ describe("independent consent and fail-closed recording", () => {
     const t = makeTest(); const s = await setup(t);
     for (const token of tokens.slice(0, 2)) await t.mutation(api.consentRecording, { token, conversationId: s.conversationId });
     await bothPresent(t, s.conversationId);
-    vi.setSystemTime(Date.now() + 6000);
+    vi.setSystemTime(Date.now() + RECORDING_FRESHNESS_MS + 1000);
     await expect(t.mutation(api.startRecording, { token: tokens[0], conversationId: s.conversationId })).rejects.toThrow("online");
     for (const token of tokens.slice(0, 2)) expect(await heartbeat(t, token, s.conversationId)).toBeNull();
     await expect(t.mutation(api.startRecording, { token: tokens[0], conversationId: s.conversationId })).resolves.toHaveProperty("serverNow");
@@ -213,10 +214,11 @@ describe("one-time presence challenges and delayed withdrawal", () => {
     await heartbeat(t, tokens[0], s.conversationId);
     const ticket = await t.mutation(api.presenceTicket, { token: tokens[1], conversationId: s.conversationId });
     const localWithdrawalAt = ticket.issuedAt + 100;
-    vi.setSystemTime(initial.serverNow + 4500);
+    // The acknowledgement arrives late: 500 ms before the lease would run out.
+    vi.setSystemTime(initial.serverNow + RECORDING_FRESHNESS_MS - 500);
     const late = await t.mutation(api.heartbeat, { token: tokens[1], conversationId: s.conversationId, ticketId: ticket.ticketId });
     expect(late.leaseUntil).toBeLessThanOrEqual(ticket.expiresAt);
-    expect(late.leaseUntil).toBeLessThanOrEqual(localWithdrawalAt + 5000);
+    expect(late.leaseUntil).toBeLessThanOrEqual(localWithdrawalAt + RECORDING_FRESHNESS_MS);
     expect(late.leaseUntil - late.serverNow).toBeLessThan(2000);
     const stored = await t.run((ctx) => ctx.db.query("conversations").first());
     expect(stored!.lastSeen[s.b]).toBe(ticket.issuedAt);

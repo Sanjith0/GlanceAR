@@ -1,5 +1,5 @@
 import type { Conversation, GlanceDataClient, RecordingLease } from '../../../src/domain';
-import { RAW_AUDIO_RETENTION_MS } from '../../../src/domain';
+import { RAW_AUDIO_RETENTION_MS, RECORDING_FRESHNESS_MS } from '../../../src/domain';
 
 export type CaptureView = {
   capturing: boolean; busy: boolean; hasUpload: boolean; notice: string;
@@ -56,7 +56,7 @@ function isNotReady(error: unknown): boolean {
 /** No JS RTT adjustment: the one-use native ticket accounts for the entire delay. */
 export function serverLeaseDuration(lease: RecordingLease): number {
   if (!Number.isFinite(lease.leaseUntil) || !Number.isFinite(lease.serverNow)) return 0;
-  return Math.max(0, Math.min(5_000, lease.leaseUntil - lease.serverNow));
+  return Math.max(0, Math.min(RECORDING_FRESHNESS_MS, lease.leaseUntil - lease.serverNow));
 }
 
 /** Pure lifecycle controller. React only supplies focus, context and view updates. */

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { demoReducer, demoSnapshot, initialDemo, samplePeople } from '../src/demo';
 import { remainingLeaseMs } from '../src/lease';
-import type { Conversation } from '../src/domain';
+import { RECORDING_FRESHNESS_MS, type Conversation } from '../src/domain';
 
 const pair: Conversation = { id: 'c', eventId: 'builders', participants: samplePeople, recorderId: 'alex', status: 'consent', recordingConsent: [], exchangeConsent: [] };
 describe('labelled walkthrough state', () => {
@@ -43,6 +43,6 @@ describe('conservative monotonic capture lease', () => {
   it('rejects expired/invalid leases and caps overlong authorization', () => {
     expect(remainingLeaseMs({ serverNow: 100, leaseUntil: 99 }, 10, 20)).toBe(0);
     expect(remainingLeaseMs({ serverNow: NaN, leaseUntil: 999 }, 10, 20)).toBe(0);
-    expect(remainingLeaseMs({ serverNow: 100, leaseUntil: 100000 }, 10, 20)).toBe(4990);
+    expect(remainingLeaseMs({ serverNow: 100, leaseUntil: 100000 }, 10, 20)).toBe(RECORDING_FRESHNESS_MS - 10);
   });
 });

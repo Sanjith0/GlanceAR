@@ -12,6 +12,7 @@ import { MatchStatus, SharedWith, byShared, useAutoMatch } from './discover/Peop
 import { matchPeople } from './discover/api';
 import { externalJoinHref, peekPendingJoin } from './externalJoin';
 import { claimConversationOpen, markConversationOpened } from './conversationOpen';
+import { useKeepAwake } from './capture/wakeLock';
 import { MatchName } from './PersonCards';
 const firstName = (name: string) => name.split(' ')[0];
 import { samplePeople } from './demo';
@@ -440,6 +441,8 @@ export function ConversationScreen() {
   const finishInFlight = useRef<string | null>(null);
   const connected = Boolean(conversation && conversation.status !== 'cancelled'
     && (conversation.connectedAt || conversation.status === 'shared'));
+  // A conversation needs both phones awake; a locked screen ends it for both people.
+  useKeepAwake(focused && Boolean(conversation) && ['consent', 'recording'].includes(conversation?.status ?? ''));
   const feedback = useMemo(() => reconcileConnectionFeedback(feedbackState, {
     id, connected, recording: conversation?.status === 'recording', visible: focused && foreground,
     cancelled: conversation?.status === 'cancelled',

@@ -118,6 +118,9 @@ export default function GestureCapture({ active, armed = true, sessionId, source
           video: element,
           isCurrent,
           isLive: () => lease?.stream.getVideoTracks()[0]?.readyState === 'live',
+          // A model that drops out (screen lock, memory pressure) is rebuilt, not abandoned.
+          recover: 3,
+          onRecovering: () => report('Restarting hand detection…'),
           onReady: () => report(latest.current.handsRequired === 1
             ? `Watching for ${latest.current.partnerName} hand: thumb, index and middle up.`
             : 'Both people: show one hand each.'),

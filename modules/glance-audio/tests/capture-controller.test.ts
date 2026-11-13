@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CaptureController, serverLeaseDuration, type CaptureContext } from '../src/CaptureController';
-import type { Conversation, GlanceDataClient, RecordingLease } from '../../../src/domain';
+import { RECORDING_FRESHNESS_MS, type Conversation, type GlanceDataClient, type RecordingLease } from '../../../src/domain';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -224,7 +224,8 @@ describe('capture lifecycle safety', () => {
     expect(h.audio.ticket.mock.invocationCallOrder[0]).toBeLessThan(h.client.startRecording.mock.invocationCallOrder[0]);
     expect(h.audio.start).toHaveBeenCalledWith(5_000, 'native-ticket', h.audio.prepare.mock.calls[0][0]);
     expect(serverLeaseDuration({ serverNow: 5, leaseUntil: Infinity })).toBe(0);
-    expect(serverLeaseDuration({ serverNow: 0, leaseUntil: 20_000 })).toBe(5_000);
+    // An authorization longer than the freshness window is capped to it.
+    expect(serverLeaseDuration({ serverNow: 0, leaseUntil: RECORDING_FRESHNESS_MS * 4 })).toBe(RECORDING_FRESHNESS_MS);
   });
 
   it('stale heartbeat after stop/new capture cannot renew either capture', async () => {

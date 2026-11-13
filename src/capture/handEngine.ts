@@ -28,6 +28,11 @@ export async function createHandEngine(): Promise<HandEngine> {
 /**
  * Own one model and serial inference loop. Cancellation closes late-loading models;
  * repeated/stalled video frames cannot accumulate hold time.
+ *
+ * With `recover`, a model that fails mid-run is closed and rebuilt, up to that many times
+ * in a row, before `onError` is reported. A phone that locked its screen or ran short of
+ * memory can lose the model for a moment; that should not end hand detection for good.
+ * The count starts again after a run of good frames, so this never retries without bound.
  */
 export function startHandTracking(options: {
   video: HTMLVideoElement;
@@ -37,11 +42,30 @@ export function startHandTracking(options: {
   onReady?: () => void;
   onFrame: (hands: HandSample[], timestamp: number) => void;
   onError: (error: unknown) => void;
+  /** How many rebuilds in a row to try after a failure. Default 0: fail on the first error. */
+  recover?: number;
+  /** Told each time a rebuild begins, with its number (1, 2, …). */
+  onRecovering?: (attempt: number) => void;
 }) {
   let cancelled = false, engine: HandEngine | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let lastFrame = -1;
+  let rebuilds = 0, goodFrames = 0;
   const current = () => !cancelled && (options.isCurrent?.() ?? true);
+  const failed = (error: unknown) => {
+    engine?.close(); engine = null;
+    if (!current()) return;
+    // A stopped camera is not something a new model can fix.
+    const cameraLive = !options.isLive || options.isLive();
+    if (cameraLive && rebuilds < (options.recover ?? 0)) {
+      rebuilds += 1; goodFrames = 0;
+      lastFrame = -1; // the new model looks at the current frame, even if the picture has not moved on
+      options.onRecovering?.(rebuilds);
+      timer = setTimeout(build, 600 * rebuilds);
+      return;
+    }
+    options.onError(error);
+  };
   const loop = () => {
     if (!current()) { engine?.close(); engine = null; return; }
     if (!engine) return;
@@ -52,22 +76,26 @@ export function startHandTracking(options: {
         lastFrame = video.currentTime;
         const now = performance.now();
         const hands = engine.detect(video, now);
+        goodFrames += 1;
+        if (goodFrames >= 30) rebuilds = 0; // it has been healthy for a while
         if (current()) options.onFrame(hands, now);
       }
     } catch (error) {
-      if (current()) options.onError(error);
-      engine?.close(); engine = null;
+      failed(error);
       return;
     }
     if (current()) timer = setTimeout(loop, 90);
     else { engine?.close(); engine = null; }
   };
-  void (options.create ?? createHandEngine)().then(created => {
-    if (!current()) { created.close(); return; }
-    engine = created;
-    options.onReady?.();
-    loop();
-  }).catch(error => { if (current()) options.onError(error); });
+  function build() {
+    void (options.create ?? createHandEngine)().then(created => {
+      if (!current()) { created.close(); return; }
+      engine = created;
+      options.onReady?.();
+      loop();
+    }).catch(error => { if (current()) failed(error); });
+  }
+  build();
   return () => {
     cancelled = true;
     clearTimeout(timer);

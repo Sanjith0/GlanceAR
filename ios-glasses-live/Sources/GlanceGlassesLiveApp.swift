@@ -16,9 +16,15 @@ struct GlanceGlassesLiveApp: App {
     WindowGroup {
       ContentView(camera: camera, host: host)
         .onOpenURL { url in Task { await camera.handleURL(url) } }
+        .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
         .onChange(of: scenePhase) { _, phase in
           if phase == .background { host.appBackgrounded() }
-          if phase == .active { camera.refresh() }
+          if phase == .active {
+            camera.refresh()
+            // Glance is used hands-free: the screen must not lock mid-conversation, which
+            // would stop the page and end the conversation for both people.
+            UIApplication.shared.isIdleTimerDisabled = true
+          }
         }
     }
   }

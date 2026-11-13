@@ -250,7 +250,17 @@ export interface GlanceDataClient {
   close(): Promise<void>;
 }
 
-export const RECORDING_FRESHNESS_MS = 5_000;
+/**
+ * How stale a participant's last check-in may be before a recording ends. Both phones
+ * check in every second; the recording stops once either has not been heard from for
+ * this long.
+ *
+ * It was 5 seconds. Real conversations on two phones over mobile data ended by
+ * themselves: after each side's network delay the working margin was 2 to 3 seconds, so
+ * one slow check-in was enough. The cost of a longer window is that a recording can run
+ * up to this long after a phone drops away.
+ */
+export const RECORDING_FRESHNESS_MS = 20_000;
 export const MAX_RECORDING_MS = 10 * 60_000;
 export const RAW_AUDIO_RETENTION_MS = 15 * 60_000;
 export const EVENT_PERMISSION_POLICY_VERSION = "glance-event-v1";
