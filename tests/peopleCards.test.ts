@@ -141,3 +141,15 @@ describe('attendee match colours', () => {
     expect(matchLabel({ shared: [] })).toBe('Nothing in common yet');
   });
 });
+
+describe('card countdown label', () => {
+  it('counts whole seconds left of the ten', async () => {
+    const { secondsLeft } = await import('../src/peopleCards');
+    expect(secondsLeft(1)).toBe(10);
+    expect(secondsLeft(0.75)).toBe(8);
+    expect(secondsLeft(0.01)).toBe(1);
+    expect(secondsLeft(0)).toBe(0);
+    expect(secondsLeft(-1)).toBe(0);
+    expect(secondsLeft(2)).toBe(10);
+  });
+});

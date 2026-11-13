@@ -73,6 +73,59 @@ describe("Dev tools switch", () => {
   });
 });
 
+describe("demo mode: every scanned face in every event", () => {
+  /** A third device account with a scan, in a different event from the first two. */
+  async function elsewhere(t: Test) {
+    const c: string = await t.mutation(api.register, { token: tokens[2], name: "Device 2", role: "Elsewhere", photoUrl: "" });
+    const other: string = await t.mutation(api.createEvent, { token: tokens[2], title: "Other event", location: "Dallas" });
+    await t.mutation(api.setEventPermission, { token: tokens[2], eventId: other, enabled: true });
+    await t.mutation(api.saveFaceScan, { token: tokens[2], ...scan(2) });
+    return { c, other };
+  }
+  const seen = async (t: Test, eventId: string) => {
+    const directory = await t.query(api.faceDirectory, { token: tokens[1], eventId });
+    return { ids: directory.templates.map((x: { profileId: string }) => x.profileId).sort(), guests: directory.guests };
+  };
+
+  it("recognizes scans from other events and from nowhere, and names them as guests", async () => {
+    const t = makeTest();
+    const s = await setup(t);
+    const { c } = await elsewhere(t);
+    const loose: string = await t.mutation(dev.addProfile, added(5, "No Event Guest"));
+    const view = await seen(t, s.eventId);
+    expect(view.ids).toEqual([s.a, c, loose].sort());
+    expect(view.guests.map((p: { id: string }) => p.id).sort()).toEqual([c, loose].sort());
+    expect(view.guests.find((p: { id: string }) => p.id === c)).toMatchObject({ name: "Device 2", role: "Elsewhere" });
+    expect(view.guests.find((p: { id: string }) => p.id === loose)).toMatchObject({ name: "No Event Guest", managed: true });
+    // A member of this event is never listed twice or as a guest.
+    expect(view.guests.some((p: { id: string }) => p.id === s.a)).toBe(false);
+    // Being recognizable is still not a way to be paired with or recorded.
+    await t.mutation(api.saveFaceScan, { token: tokens[1], ...scan(1) });
+    await expect(t.mutation(api.reportSighting, { token: tokens[1], eventId: s.eventId, seenId: c })).rejects.toThrow();
+  });
+
+  it("goes back to this event’s own members when the switch is off", async () => {
+    const t = makeTest();
+    const s = await setup(t);
+    const { c } = await elsewhere(t);
+    vi.stubEnv("GLANCE_DEV_TOOLS", "");
+    const view = await seen(t, s.eventId);
+    expect(view.ids).toEqual([s.a]);
+    expect(view.ids).not.toContain(c);
+    expect(view.guests).toBeUndefined();
+  });
+
+  it("still withholds everything from a viewer who has not turned Glance on", async () => {
+    const t = makeTest();
+    const s = await setup(t);
+    await elsewhere(t);
+    await t.mutation(api.setEventPermission, { token: tokens[1], eventId: s.eventId, enabled: false });
+    const directory = await t.query(api.faceDirectory, { token: tokens[1], eventId: s.eventId });
+    expect(directory).toMatchObject({ enabled: false, templates: [] });
+    expect(directory.guests).toBeUndefined();
+  });
+});
+
 describe("Dev tab face scans", () => {
   it("lists every scan with its owner, sample count and events, without descriptors or photos", async () => {
     const t = makeTest();
@@ -130,7 +183,7 @@ describe("Dev tab face scans", () => {
     expect((await overview(t)).people).toHaveLength(1);
   });
 
-  it("renames and rescans only Dev-added profiles", async () => {
+  it("renames only Dev-added profiles, and rescans anyone", async () => {
     const t = makeTest();
     const s = await setup(t);
     const guest: string = await t.mutation(dev.addProfile, added(5, "Guest Five"));
@@ -142,24 +195,38 @@ describe("Dev tab face scans", () => {
     await expect(t.mutation(dev.saveScan, { ...scan(0), profileId: guest, agreed: true })).rejects.toThrow(/already matches/);
 
     await expect(t.mutation(dev.updateProfile, { profileId: s.a, name: "Hijacked", role: "" })).rejects.toThrow(/own device/);
-    await expect(t.mutation(dev.saveScan, { ...scan(7), profileId: s.a, agreed: true })).rejects.toThrow(/own device/);
     await expect(t.mutation(dev.deleteProfile, { profileId: s.a })).rejects.toThrow(/own device/);
     await expect(t.mutation(dev.setEvent, { profileId: s.a, eventId: s.eventId, member: false })).rejects.toThrow(/own device/);
-    expect((await overview(t)).people.find((p) => p.id === s.a)).toMatchObject({ name: "Device 0", scan: { samples: 3 } });
+
+    // A person who registered on their own device can be rescanned from here too,
+    // but still needs the agreement, and cannot be given a face that is someone else's.
+    await expect(t.mutation(dev.saveScan, { ...scan(7, 5), profileId: s.a, agreed: false })).rejects.toThrow(/agreed/);
+    await expect(t.mutation(dev.saveScan, { ...scan(6), profileId: s.a, agreed: true })).rejects.toThrow(/already matches Renamed Guest/);
+    await t.mutation(dev.saveScan, { ...scan(7, 5), profileId: s.a, agreed: true });
+    expect((await overview(t)).people.find((p) => p.id === s.a)).toMatchObject({ name: "Device 0", managed: false, scan: { samples: 5 } });
   });
 
   it("moves a Dev-added profile in and out of an event", async () => {
     const t = makeTest();
     const s = await setup(t);
     const guest: string = await t.mutation(dev.addProfile, added(5, "Guest Five"));
-    const recognized = async () => (await t.query(api.faceDirectory, { token: tokens[0], eventId: s.eventId }))
-      .templates.some((x: { profileId: string }) => x.profileId === guest);
-    expect(await recognized()).toBe(false);
+    // In demo mode they are recognized either way; the event decides whether they are
+    // one of its people or a guest from outside it.
+    const place = async () => {
+      const directory = await t.query(api.faceDirectory, { token: tokens[0], eventId: s.eventId });
+      const snapshot = await t.query(api.snapshot, { token: tokens[0], eventId: s.eventId });
+      return {
+        recognized: directory.templates.some((x: { profileId: string }) => x.profileId === guest),
+        guest: directory.guests.some((p: { id: string }) => p.id === guest),
+        member: snapshot.members.some((p: { id: string }) => p.id === guest),
+      };
+    };
+    expect(await place()).toEqual({ recognized: true, guest: true, member: false });
     await t.mutation(dev.setEvent, { profileId: guest, eventId: s.eventId, member: true });
     await t.mutation(dev.setEvent, { profileId: guest, eventId: s.eventId, member: true }); // twice is harmless
-    expect(await recognized()).toBe(true);
+    expect(await place()).toEqual({ recognized: true, guest: false, member: true });
     await t.mutation(dev.setEvent, { profileId: guest, eventId: s.eventId, member: false });
-    expect(await recognized()).toBe(false);
+    expect(await place()).toEqual({ recognized: true, guest: true, member: false });
   });
 
   it("deletes anyone’s scan, and removes a Dev-added profile completely", async () => {

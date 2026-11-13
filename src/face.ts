@@ -97,10 +97,15 @@ export class RecognitionTracker {
   reset() { this.seen.clear(); }
 }
 
-/** Map a box in source video pixels onto an object-fit: cover view, optionally mirrored. */
+/**
+ * Map a box in source video pixels onto the view that shows the video, optionally
+ * mirrored. 'cover' fills the view and crops the picture; 'contain' shows all of it
+ * with bars at the sides. Must match the video element's object-fit.
+ */
 export function projectBox(box: FaceBox, video: { width: number; height: number },
-  view: { width: number; height: number }, mirrored: boolean): FaceBox {
-  const scale = Math.max(view.width / video.width, view.height / video.height);
+  view: { width: number; height: number }, mirrored: boolean, fit: 'cover' | 'contain' = 'cover'): FaceBox {
+  const ratios = [view.width / video.width, view.height / video.height] as const;
+  const scale = fit === 'contain' ? Math.min(...ratios) : Math.max(...ratios);
   const offsetX = (view.width - video.width * scale) / 2;
   const offsetY = (view.height - video.height * scale) / 2;
   const width = box.width * scale, height = box.height * scale;

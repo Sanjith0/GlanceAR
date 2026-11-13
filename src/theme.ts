@@ -7,6 +7,8 @@ export const colors = {
   orange: '#9A4B00', orangeLight: '#FFEBD1',
   /** Light blue marker behind the things two people have in common. */
   highlight: '#CFE2FF',
+  /** The glasses cards' accent: the outline that runs around a recognized person's card. */
+  violet: '#7C5CFF', violetSoft: '#E6DFFF', violetLight: '#F5F2FF', violetInk: '#4A2FBF',
 };
 export const fonts = {
   body: 'Inter_400Regular', medium: 'Inter_500Medium',

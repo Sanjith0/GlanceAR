@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Platform, Pressable, Text, View, useWindowDimensions } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { ConvexError } from 'convex/values';
 import { Badge, Button, Empty, Field, Icon, Notice, Page, Portrait } from './components';
 import { colors, fonts, s } from './theme';
@@ -98,6 +98,17 @@ export function DevToolsScreen() {
     }
   }, [scanning, client, form, act]);
 
+  // Arriving from "Rescan" on a registered face (four taps in LIVE Camera): open that
+  // person's rescan as soon as the list has loaded, once per arrival.
+  const { rescan: rescanParam } = useLocalSearchParams<{ rescan?: string }>();
+  const [opened, setOpened] = useState('');
+  if (data && rescanParam && opened !== rescanParam) {
+    setOpened(rescanParam);
+    const person = data.people.find(candidate => candidate.id === rescanParam);
+    if (person) setScanning({ kind: 'rescan', person, started: false, agreed: false });
+    else setStatus({ text: 'That person is not in the list, so there is nothing to rescan.', error: true });
+  }
+
   const cameraWidth = Math.max(220, Math.min(Math.min(width, 520) - 88, height - 330));
   const camera = (running: boolean, children?: React.ReactNode) => <GuidedFaceScan active={focused && Platform.OS === 'web'}
     scopeId="dev:scan" running={running} wantPortrait size={cameraWidth} onDone={finishScan} onStop={stopScan}>{children}</GuidedFaceScan>;
@@ -115,6 +126,7 @@ export function DevToolsScreen() {
   </Page>;
 
   const adding = scanning?.kind === 'add';
+  const rescanning = scanning?.kind === 'rescan' ? scanning : null;
   return <Page back title="Dev tools">
     <View style={s.between}>
       <Text style={s.title}>Dev tools</Text>
@@ -124,6 +136,19 @@ export function DevToolsScreen() {
       </View>
     </View>
     {status ? <Notice error={status.error}>{status.text}</Notice> : null}
+
+    {rescanning && <View testID="dev-rescan" style={[s.card, { gap: 14 }]}>
+      <View style={s.between}><Text style={[s.heading, s.grow]}>{`Rescan ${rescanning.person.name}`}</Text>
+        <Badge>CAMERA ON</Badge></View>
+      {camera(rescanning.started, <View style={{ gap: 12 }}>
+        <Text style={s.small}>This replaces their saved face scan. Point the camera at {rescanning.person.name.split(' ')[0]}; nobody else should be in view.</Text>
+        <Check testID="dev-rescan-agree" checked={rescanning.agreed} label={AGREEMENT} onChange={agreed => setScanning({ ...rescanning, agreed })} />
+        <View style={s.row}>
+          <View style={s.grow}><Button testID="dev-rescan-start" icon="camera" disabled={!rescanning.agreed} onPress={() => setScanning({ ...rescanning, started: true })}>Start scan</Button></View>
+          <View style={s.grow}><Button tone="ghost" onPress={() => setScanning(null)}>Cancel</Button></View>
+        </View>
+      </View>)}
+    </View>}
 
     <View testID="dev-add" style={[s.card, { gap: 14 }]}>
       <View style={s.between}><Text style={s.heading}>{adding ? `Scanning ${form.name.trim()}` : 'Add a face scan profile'}</Text>
@@ -154,7 +179,6 @@ export function DevToolsScreen() {
     {data.truncated ? <Notice>{`Showing the newest ${data.people.length}. Older scans are not listed.`}</Notice> : null}
     {!data.people.length && <Empty icon="users" title="No face scans yet" text="Scans appear here as attendees register their face, or when you add someone above." />}
     {data.people.map(person => {
-      const rescanning = scanning?.kind === 'rescan' && scanning.person.id === person.id ? scanning : null;
       const edit = editing?.id === person.id ? editing : null;
       const member = new Set(person.events.map(event => event.id));
       return <View key={person.id} testID={`dev-person-${person.id}`} style={[s.card, { gap: 12 }]}>
@@ -181,13 +205,7 @@ export function DevToolsScreen() {
           {person.events.map(event => <Chip key={event.id} label={`${event.title}${event.recognized ? '' : ' · Glance off'}`} on={event.recognized} />)}
         </View>}
 
-        {rescanning ? camera(rescanning.started, <View style={{ gap: 12 }}>
-          <Check checked={rescanning.agreed} label={AGREEMENT} onChange={agreed => setScanning({ ...rescanning, agreed })} />
-          <View style={s.row}>
-            <View style={s.grow}><Button icon="camera" disabled={!rescanning.agreed} onPress={() => setScanning({ ...rescanning, started: true })}>Start scan</Button></View>
-            <View style={s.grow}><Button tone="ghost" onPress={() => setScanning(null)}>Cancel</Button></View>
-          </View>
-        </View>) : edit ? <View style={{ gap: 12 }}>
+        {edit ? <View style={{ gap: 12 }}>
           <Field label="Name" value={edit.name} maxLength={80} onChangeText={name => setEditing({ ...edit, name })} />
           <Field label="One-line introduction" value={edit.role} maxLength={120} onChangeText={role => setEditing({ ...edit, role })} />
           <View style={s.row}>
@@ -196,12 +214,12 @@ export function DevToolsScreen() {
             <View style={s.grow}><Button tone="ghost" onPress={() => setEditing(null)}>Cancel</Button></View>
           </View>
         </View> : <View style={{ gap: 8 }}>
-          {person.managed && <View style={s.row}>
-            <View style={s.grow}><Button tone="secondary" icon="edit-2" disabled={busy || scanning !== null}
-              onPress={() => setEditing({ id: person.id, name: person.name, role: person.role })}>Edit</Button></View>
+          <View style={s.row}>
+            {person.managed && <View style={s.grow}><Button tone="secondary" icon="edit-2" disabled={busy || scanning !== null}
+              onPress={() => setEditing({ id: person.id, name: person.name, role: person.role })}>Edit</Button></View>}
             <View style={s.grow}><Button tone="secondary" icon="camera" disabled={busy || scanning !== null}
               onPress={() => { setStatus(null); preloadFaceModels(); setScanning({ kind: 'rescan', person, started: false, agreed: false }); }}>{person.scan ? 'Rescan' : 'Scan'}</Button></View>
-          </View>}
+          </View>
           <View style={s.row}>
             {person.scan && <View style={s.grow}><Button tone="danger" icon="trash-2" disabled={busy || scanning !== null}
               onPress={() => confirming === `scan:${person.id}`
@@ -212,7 +230,7 @@ export function DevToolsScreen() {
                 ? void act(() => client.deleteProfile(person.id), `${person.name} was removed.`)
                 : setConfirming(`profile:${person.id}`)}>{confirming === `profile:${person.id}` ? 'Tap again to remove' : 'Remove person'}</Button></View>}
           </View>
-          {!person.managed && <Text style={s.small}>This person registered on their own device. You can delete their scan, but only they can rescan or rename.</Text>}
+          {!person.managed && <Text style={s.small}>This person registered on their own device. You can rescan or delete their scan, but only they can rename.</Text>}
         </View>}
       </View>;
     })}

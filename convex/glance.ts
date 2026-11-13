@@ -5,7 +5,7 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 import { query, mutation, type QueryCtx, type MutationCtx, type Doc, type Id } from "./server";
 import {
   MAX_RECORDING_MS, RAW_AUDIO_RETENTION_MS, RECORDING_FRESHNESS_MS, EVENT_PERMISSION_POLICY_VERSION,
-  FACE_MODEL, FACE_SCAN_POLICY_VERSION, SIGHTING_WINDOW_MS,
+  FACE_MODEL, FACE_SCAN_POLICY_VERSION, SIGHTING_WINDOW_MS, DEMO_FACE_DIRECTORY_LIMIT,
 } from "../src/domain";
 import type { Profile, Event, Conversation, Snapshot, FaceDirectory, SightingResult } from "../src/domain";
 import { compactDescriptor, validDescriptors } from "../src/face";
@@ -76,6 +76,11 @@ function profile(p: Doc<"profiles">, glanceEnabled?: boolean): Profile {
     ...(p.managedBy ? { managed: true } : {}),
   };
 }
+/**
+ * Demo mode, switched on for a backend with GLANCE_DEV_TOOLS=enabled: the hidden Dev
+ * tools answer, and LIVE Camera recognizes every scanned face in every event.
+ */
+export const demoMode = () => process.env.GLANCE_DEV_TOOLS === "enabled";
 /** Members LIVE Camera may recognize: those with Glance on, and people added from the Dev tab. */
 const recognizable = (membership: Doc<"memberships">) => enabled(membership) || membership.recognition === "dev";
 function event(e: Doc<"events">): Event {
@@ -396,11 +401,26 @@ export const faceDirectory = query({
     const scanned = (await faceTemplate(ctx, me._id)) !== null;
     if (!enabled(own)) return { model: FACE_MODEL, enabled: false, scanned, templates: [] };
     const members = await ctx.db.query("memberships").withIndex("by_event", (q) => q.eq("eventId", args.eventId)).take(24);
-    const templates = await Promise.all(members.filter(recognizable).map(async (m) => {
+    const templates = (await Promise.all(members.filter(recognizable).map(async (m) => {
       const row = await faceTemplate(ctx, m.profileId);
       return row ? { profileId: m.profileId as string, descriptors: row.descriptors } : null;
-    }));
-    return { model: FACE_MODEL, enabled: true, scanned, templates: templates.filter((t) => t !== null) };
+    }))).filter((t) => t !== null);
+    if (!demoMode()) return { model: FACE_MODEL, enabled: true, scanned, templates };
+    // Demo mode: every current face scan is recognizable here, whichever event its owner
+    // joined. The owners who are not members of this event travel along as `guests`, so
+    // LIVE Camera has a name and introduction to show for them.
+    const inEvent = new Set(members.map((m) => m.profileId as string));
+    const listed = new Set(templates.map((t) => t.profileId));
+    const guests: Profile[] = [];
+    for (const row of await ctx.db.query("faceTemplates").order("desc").take(DEMO_FACE_DIRECTORY_LIMIT)) {
+      if (listed.has(row.profileId) || row.model !== FACE_MODEL || row.policyVersion !== FACE_SCAN_POLICY_VERSION) continue;
+      const owner = await ctx.db.get(row.profileId);
+      if (!owner) continue;
+      listed.add(row.profileId);
+      templates.push({ profileId: row.profileId, descriptors: row.descriptors });
+      if (!inEvent.has(row.profileId)) guests.push(profile(owner));
+    }
+    return { model: FACE_MODEL, enabled: true, scanned, templates, guests };
   },
 });
 export const reportSighting = mutation({

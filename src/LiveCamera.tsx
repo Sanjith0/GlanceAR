@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ConvexError } from 'convex/values';
 import { AccessibilityInfo, Animated, Easing, Platform, Pressable, Text, View, useWindowDimensions } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Badge, Button, Empty, Icon, Notice, Page, Portrait } from './components';
 import { colors, fonts, s } from './theme';
-import { useFaceDirectory, useGlance } from './state';
+import { deploymentURL, useFaceDirectory, useGlance } from './state';
 import { DemoBanner, GlobalStatus, useOperation, useScreenFocused } from './screens';
 import FaceCamera, { type FaceFrame, type FaceOverlay } from './capture/FaceCamera';
 import { cancelLiveCameraHandoff, prepareLiveCameraHandoff } from './capture/liveCameraStream';
@@ -16,6 +17,8 @@ import { glassesShellAvailable, setCameraDevice, useCameraDevice } from './captu
 import { CameraPicker } from './CameraPicker';
 import { PersonCardView } from './PersonCards';
 import { PeopleCardTracker, type PersonCard } from './peopleCards';
+import { TapCounter } from './secretTaps';
+import { createDevClient } from './data/devClient';
 
 const firstName = (name: string) => name.split(' ')[0];
 const LIVE_HOLD_LOST_MS = 4_000;
@@ -77,9 +80,11 @@ export function LiveCameraScreen() {
   const me = app.snapshot?.me;
   const enabled = selected && Boolean(app.snapshot?.eventPermission?.enabled);
   const members = useMemo(() => selected ? app.snapshot?.members ?? [] : [], [selected, app.snapshot?.members]);
-  const people = useMemo(() => new Map(members.map(p => [p.id, p])), [members]);
   const { directory, error: syncError } = useFaceDirectory(id);
   const templates = useMemo(() => directory?.templates ?? [], [directory?.templates]);
+  // Demo mode: people with a face scan who are not in this event. Recognized, never paired.
+  const guests = useMemo(() => selected ? directory?.guests ?? [] : [], [selected, directory?.guests]);
+  const people = useMemo(() => new Map([...guests, ...members].map(p => [p.id, p])), [guests, members]);
   const active = app.snapshot?.conversations.find(c => c.eventId === id && c.consentMode === 'event' && ['consent', 'recording'].includes(c.status));
   const [notice, setNotice] = useState('');
 
@@ -93,6 +98,12 @@ export function LiveCameraScreen() {
   const cardTracker = useRef(new PeopleCardTracker());
   const [cards, setCards] = useState<PersonCard[]>([]);
   const [videoMinimized, setVideoMinimized] = useState(false);
+  // Hidden controls: four quick taps on a registered person open Rescan and Delete scan for them.
+  const adminTaps = useRef(new Map<string, TapCounter>());
+  const [adminId, setAdminId] = useState<string | null>(null);
+  const [adminConfirm, setAdminConfirm] = useState(false);
+  const [adminBusy, setAdminBusy] = useState(false);
+  const devClient = useMemo(() => app.mode === 'live' && deploymentURL ? createDevClient(deploymentURL) : null, [app.mode]);
   const [pairing, setPairing] = useState<Record<string, string>>({});
   const countdown = useRef(new RecognitionCountdown(LIVE_RECOGNITION_HOLD_MS));
   const scope = useRef(new RecognitionScope());
@@ -319,8 +330,27 @@ export function LiveCameraScreen() {
     app.mode, directory?.scanned, publishCountdown, pairAfterHold, report]);
 
   const recognizable = templates.filter(t => t.profileId !== me?.id && people.has(t.profileId)).length;
-  const registeredPeople = members.filter(person => person.id === me?.id ? Boolean(directory?.scanned)
+  const registeredPeople = [...members, ...guests].filter(person => person.id === me?.id ? Boolean(directory?.scanned)
     : templates.some(t => t.profileId === person.id));
+  const adminPerson = registeredPeople.find(person => person.id === adminId);
+  const tapPerson = useCallback((personId: string) => {
+    let counter = adminTaps.current.get(personId);
+    if (!counter) { counter = new TapCounter(4); adminTaps.current.set(personId, counter); }
+    if (counter.tap(Date.now())) { setAdminId(personId); setAdminConfirm(false); setNotice(''); }
+  }, []);
+  const deleteScan = (person: { id: string; name: string }) => {
+    if (!adminConfirm) { setAdminConfirm(true); return; }
+    setAdminBusy(true);
+    const work = devClient ? devClient.deleteScan(person.id) : app.deleteFaceScan(person.id);
+    void work.then(() => { setNotice(`${firstName(person.name)}’s face scan was deleted.`); setAdminId(null); },
+      error => setNotice(error instanceof ConvexError ? String(error.data) : error instanceof Error ? error.message : 'Could not delete the scan.'))
+      .finally(() => { setAdminBusy(false); setAdminConfirm(false); });
+  };
+  const rescan = (person: { id: string }) => {
+    // With a backend the guided rescan lives in Dev tools; the walkthrough rescans from registration.
+    if (devClient) router.push(`/dev?rescan=${person.id}`);
+    else if (router.canGoBack()) router.back(); else router.replace(`/register/${id}`);
+  };
   const cameraActive = focused && enabled && Platform.OS === 'web';
   const counting = countdownView.secondsRemaining !== null;
   const partnerName = firstName(people.get(countdownView.partnerId ?? '')?.name ?? 'your partner');
@@ -441,10 +471,26 @@ export function LiveCameraScreen() {
           <Text style={s.small}>{`${recognizable} ${recognizable === 1 ? 'person' : 'people'} recognizable in this event${app.mode === 'live'
             ? '. Updates instantly when attendees join, pause, rescan or delete.' : '.'}`}</Text>
           {registeredPeople.length > 0 && <View style={[s.row, { flexWrap: 'wrap' }]}>
-            {registeredPeople.map(person => <View key={person.id} style={[s.row, { gap: 6 }]}>
+            {registeredPeople.map(person => <Pressable key={person.id} testID={`registered-face-${person.id}`}
+              accessibilityLabel={`${person.name}${person.id === me?.id ? ' (you)' : ''}`} onPress={() => tapPerson(person.id)}
+              style={[s.row, { gap: 6, minHeight: 44, paddingHorizontal: 6, borderRadius: 12,
+                backgroundColor: person.id === adminId ? colors.violetLight : 'transparent' }]}>
               <Portrait person={person} size={28} />
               <Text style={s.small}>{`${firstName(person.name)}${person.id === me?.id ? ' (you)' : ''}`}</Text>
-            </View>)}
+            </Pressable>)}
+          </View>}
+          {adminPerson && <View testID="face-admin" style={[s.soft, { gap: 10, backgroundColor: colors.violetLight }]}>
+            <View style={s.between}>
+              <Text style={[s.label, s.grow]} numberOfLines={1}>{`${adminPerson.name}’s face scan`}</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel="Close these controls" onPress={() => { setAdminId(null); setAdminConfirm(false); }}
+                style={{ width: 44, height: 44, marginRight: -10, marginVertical: -10, alignItems: 'center', justifyContent: 'center' }}>
+                <Icon name="x" size={18} color={colors.muted} /></Pressable>
+            </View>
+            <View style={s.row}>
+              <View style={s.grow}><Button testID="face-admin-rescan" tone="secondary" icon="camera" disabled={adminBusy} onPress={() => rescan(adminPerson)}>Rescan</Button></View>
+              <View style={s.grow}><Button testID="face-admin-delete" tone="danger" icon="trash-2" busy={adminBusy} onPress={() => deleteScan(adminPerson)}>
+                {adminConfirm ? 'Tap again' : 'Delete scan'}</Button></View>
+            </View>
           </View>}
           <Button tone="secondary" icon="user-plus" disabled={busy || demoPairPending}
             onPress={() => router.canGoBack() ? router.back() : router.replace(`/register/${id}`)}>Edit registered users</Button>

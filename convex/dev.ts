@@ -1,6 +1,6 @@
 import { v, ConvexError } from "convex/values";
 import { query, mutation, type QueryCtx, type MutationCtx, type Doc, type Id } from "./server";
-import { clearSightings, validateProfile } from "./glance";
+import { clearSightings, demoMode, validateProfile } from "./glance";
 import { DEV_PEOPLE_LIMIT, FACE_MODEL, FACE_SCAN_POLICY_VERSION, type DevOverview, type DevPerson } from "../src/domain";
 import { compactDescriptor, faceDistance, validDescriptors, MATCH_THRESHOLD } from "../src/face";
 
@@ -20,7 +20,7 @@ const MANAGED_PREFIX = "managed:";
 export const DEV_TOOLS_OFF = "Dev tools are off on this backend. Turn them on with: npx convex env set GLANCE_DEV_TOOLS enabled";
 
 function allow(): void {
-  if (process.env.GLANCE_DEV_TOOLS !== "enabled") fail(DEV_TOOLS_OFF);
+  if (!demoMode()) fail(DEV_TOOLS_OFF);
 }
 
 const template = (ctx: QueryCtx, profileId: Id<"profiles">) =>
@@ -29,7 +29,7 @@ const template = (ctx: QueryCtx, profileId: Id<"profiles">) =>
 async function managedProfile(ctx: QueryCtx, profileId: Id<"profiles">): Promise<Doc<"profiles">> {
   const row = await ctx.db.get(profileId);
   if (!row) fail("That profile no longer exists.");
-  if (row!.managedBy !== "dev") fail("This person signed up on their own device. Only they can change their profile or rescan.");
+  if (row!.managedBy !== "dev") fail("This person signed up on their own device. Only they can change their profile.");
   return row!;
 }
 
@@ -138,13 +138,17 @@ export const updateProfile = mutation({
   },
 });
 
-/** Replace a Dev-added profile's face scan. */
+/**
+ * Replace anyone's face scan, including a person who registered on their own device.
+ * The operator confirms the person agreed, and a face that already matches someone
+ * else is refused, so one person's scan cannot be handed to another's profile.
+ */
 export const saveScan = mutation({
   args: { ...scanArgs, profileId: v.id("profiles"), agreed: v.boolean() },
   handler: async (ctx, args): Promise<null> => {
     allow();
     if (!args.agreed) fail("Confirm the person agreed to be scanned and recognized.");
-    const row = await managedProfile(ctx, args.profileId);
+    const row = await ctx.db.get(args.profileId) ?? fail("That profile no longer exists.");
     const descriptors = checkedScan(args);
     await refuseDuplicate(ctx, descriptors, row._id);
     await saveTemplate(ctx, row._id, descriptors);

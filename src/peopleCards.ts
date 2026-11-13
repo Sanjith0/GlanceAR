@@ -81,6 +81,10 @@ export class PeopleCardTracker {
   reset(): void { this.entries.clear(); }
 }
 
+/** Whole seconds left before an out-of-view card goes. */
+export const secondsLeft = (remaining: number, lingerMs = CARD_LINGER_MS): number =>
+  Math.max(0, Math.ceil(Math.max(0, Math.min(1, remaining)) * lingerMs / 1000));
+
 export interface Segment { text: string; hit: boolean }
 
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

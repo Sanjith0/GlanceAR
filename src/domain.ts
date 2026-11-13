@@ -153,6 +153,11 @@ export interface FaceDirectory {
   scanned: boolean;
   /** Enabled event members with a face scan, including the viewer (shown as "You"), plus people added from the Dev tab. */
   templates: FaceTemplate[];
+  /**
+   * Demo mode only: owners of scans in `templates` who are not members of this event.
+   * They are recognized and get a card, but cannot be paired with.
+   */
+  guests?: Profile[];
 }
 
 export interface FaceScanInput {
@@ -290,5 +295,7 @@ export interface DevOverview {
   /** True when there were more scans than this view lists. */
   truncated: boolean;
 }
+/** Demo mode: most scans from outside the event that one LIVE Camera loads. */
+export const DEMO_FACE_DIRECTORY_LIMIT = 40;
 /** Most people the Dev tab lists at once. */
 export const DEV_PEOPLE_LIMIT = 60;

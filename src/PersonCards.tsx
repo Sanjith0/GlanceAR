@@ -1,10 +1,13 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Pressable, Text, View, type StyleProp, type TextStyle } from 'react-native';
 import { Icon, Portrait } from './components';
 import { colors, fonts, s } from './theme';
 import type { Profile } from './domain';
-import { highlight, matchLabel, matchTone, type MatchTone } from './peopleCards';
+import { highlight, matchLabel, matchTone, secondsLeft, type MatchTone } from './peopleCards';
+import { CardOutline } from './CardOutline';
 import { commonTraits, talkingPoints } from './talkingPoints';
+
+const CARD_RADIUS = 20;
 
 const firstName = (name: string) => name.split(' ')[0] ?? name;
 
@@ -18,9 +21,10 @@ export function Highlighted({ text, phrases, style }: { text: string; phrases: s
 }
 
 /**
- * A small card for someone the glasses recognized: portrait, name, a few lines on
- * what to talk about with what you share highlighted, and an arrow to start the
- * conversation when they are not wearing glasses that look back at you.
+ * The card for someone the glasses recognized: portrait, name, a few lines on what to
+ * talk about with what you share highlighted, and an arrow to start the conversation
+ * when they are not wearing glasses that look back at you. A violet line runs around
+ * the card while they are in view, then drains away over their last ten seconds.
  */
 export function PersonCardView({ person, me, eventTitle, inView, remaining, canStart, starting, onStart }: {
   person: Profile;
@@ -35,35 +39,44 @@ export function PersonCardView({ person, me, eventTitle, inView, remaining, canS
   starting: boolean;
   onStart: () => void;
 }) {
+  const [size, setSize] = useState({ width: 0, height: 0 });
   const traits = commonTraits(me, person);
   const lines = talkingPoints(me, person, eventTitle);
   const name = firstName(person.name);
   const enabled = inView && canStart && !starting;
-  return <View testID={`person-card-${person.id}`} style={[s.card, { padding: 14, gap: 10, borderRadius: 16 }]}>
-    <View style={[s.row, { alignItems: 'flex-start', gap: 12 }]}>
-      <Portrait person={person} size={44} />
-      <View style={[s.grow, { gap: 6 }]}>
-        <View style={[s.row, { gap: 8 }]}>
-          <Text style={[s.label, s.grow]} numberOfLines={1}>{person.name}</Text>
-          {!inView && <Text style={s.small}>Out of view</Text>}
+  const left = secondsLeft(remaining);
+  return <View testID={`person-card-${person.id}`}
+    onLayout={event => setSize({ width: event.nativeEvent.layout.width, height: event.nativeEvent.layout.height })}
+    style={{ borderRadius: CARD_RADIUS, padding: 16, gap: 12, backgroundColor: inView ? colors.violetLight : colors.paper }}>
+    <CardOutline width={size.width} height={size.height} radius={CARD_RADIUS} progress={inView ? 1 : remaining} active={inView} />
+    <View style={[s.row, { alignItems: 'center', gap: 12 }]}>
+      <View style={{ borderRadius: 18, borderWidth: 2, borderColor: inView ? colors.violet : colors.violetSoft, padding: 2 }}>
+        <Portrait person={person} size={48} />
+      </View>
+      <View style={[s.grow, { gap: 3 }]}>
+        <Text style={[s.heading, { fontSize: 18, lineHeight: 24 }]} numberOfLines={1}>{person.name}</Text>
+        <View style={[s.row, { gap: 6 }]}>
+          <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: inView ? colors.violet : colors.line }} />
+          <Text testID={`person-card-status-${person.id}`} accessibilityLiveRegion="polite"
+            style={{ fontFamily: fonts.semibold, fontSize: 11, letterSpacing: 0.9, color: inView ? colors.violetInk : colors.muted }}>
+            {inView ? 'IN VIEW' : `OUT OF VIEW · ${left}s`}</Text>
         </View>
-        {lines.map(line => <View key={line} style={[s.row, { alignItems: 'flex-start', gap: 6 }]}>
-          <Text style={[s.small, { color: colors.blue }]}>•</Text>
-          <Highlighted text={line} phrases={traits} style={[s.body, s.grow, { fontSize: 13, lineHeight: 20 }]} />
-        </View>)}
       </View>
       <Pressable testID={`start-conversation-${person.id}`} accessibilityRole="button"
         accessibilityLabel={`Start a conversation with ${name}`}
-        accessibilityHint={enabled ? undefined : inView ? undefined : `Look at ${name} to start`}
+        accessibilityHint={enabled || !canStart ? undefined : `Look at ${name} to start`}
         accessibilityState={{ disabled: !enabled }} disabled={!enabled} onPress={onStart}
         style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center',
-          backgroundColor: enabled ? colors.blue : colors.line }}>
+          backgroundColor: enabled ? colors.violet : colors.line }}>
         <Icon name="arrow-right" size={20} color={enabled ? colors.paper : colors.muted} />
       </Pressable>
     </View>
-    <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
-      style={{ height: 3, borderRadius: 2, overflow: 'hidden', backgroundColor: colors.line }}>
-      <View style={{ height: 3, backgroundColor: inView ? colors.blue : colors.muted, width: `${Math.round(remaining * 100)}%` }} />
+    <View style={{ gap: 6 }}>
+      <Text style={{ fontFamily: fonts.semibold, fontSize: 11, letterSpacing: 0.9, color: colors.muted }}>TALK ABOUT</Text>
+      {lines.map(line => <View key={line} style={[s.row, { alignItems: 'flex-start', gap: 8 }]}>
+        <View style={{ width: 5, height: 5, borderRadius: 3, marginTop: 8, backgroundColor: colors.violet }} />
+        <Highlighted text={line} phrases={traits} style={[s.body, s.grow, { fontSize: 14, lineHeight: 21 }]} />
+      </View>)}
     </View>
   </View>;
 }

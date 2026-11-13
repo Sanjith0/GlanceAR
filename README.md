@@ -93,19 +93,28 @@ How it works:
 - **Platform limits:** recognition runs in browsers (desktop, and phone browsers over HTTPS or localhost). The iPhone app shows a placeholder until the same model is ported natively; templates from a different model would never match. In live mode, browsers record too: the conversation's recording device (whoever's phone reported first) uses its own microphone in Safari or Chrome over HTTPS, holds the same server lease as the native recorder, and uploads one 16 kHz WAV when the conversation finishes. LIVE Camera runs the same three-second hold, countdown and green flash as the demo before reporting a sighting.
 
 
-## Dev tools (hidden)
+## Demo mode: Dev tools and every scanned face
 
-On a build with a backend, tapping the **Connections** tab six times quickly opens a hidden **Dev tools** screen that lists every face scan and manages profiles for people who do not have the app.
+One backend switch turns on two things meant for demos:
 
 ```sh
-npx convex env set GLANCE_DEV_TOOLS enabled   # unset, or any other value, turns Dev tools off
+npx convex env set GLANCE_DEV_TOOLS enabled   # unset, or any other value, turns demo mode off
 ```
 
-- **No key:** the shortcut only hides the screen. The backend functions behind it are public, so while the switch above is on, anyone who knows they exist can list names and events, add profiles and delete face scans without the app. Turn the switch off on any backend where that is not acceptable.
+- **Every scanned face in every event.** LIVE Camera recognizes anyone with a current face scan (the newest 40 from outside the event), whichever event they joined, or none. People from outside the event are recognized and get a card, but cannot be paired with or recorded. With the switch off, each event recognizes only its own members who turned Glance on.
+- **Hidden Dev tools.** Tapping the **Connections** tab six times quickly opens a screen that lists every face scan and manages profiles for people who do not have the app.
+- **Four taps on a registered face.** In LIVE Camera, tapping a person under **Registered faces** four times quickly shows **Rescan** and **Delete scan** for that person. Rescan opens their guided scan in Dev tools.
+
+What this means for privacy, while the switch is on:
+
+- **No key.** The shortcuts only hide the screens. The backend functions behind them are public, so anyone who knows they exist can list names and events, add profiles, replace a face scan and delete face scans without the app.
+- **Opt-in is per backend, not per event.** A person who scanned their face for one event becomes recognizable at every event on this backend.
+
+Dev tools in detail:
+
 - **See:** everyone with a face scan (newest 60), with sample count, scan date, whether they registered on their own device or were added here, and the events they are in. Descriptors and portraits are never sent to the screen.
-- **Add:** a name, a one-line introduction, an event and a guided face scan create a profile with no device. The operator must tick that the person is present and agreed. A face that already matches someone else is refused.
-- **Edit:** profiles added here can be renamed, rescanned, moved in and out of events, or removed. Anyone's scan can be deleted. A person who registered on their own device cannot be renamed or rescanned from here.
-- **Recognition only:** people added here are recognized by LIVE Camera in their event (name, card and talking points). They hold no recording permission, so no countdown, pairing or conversation can start with them.
+- **Add:** a name, a one-line introduction, an optional event and a guided face scan create a profile with no device. The operator must tick that the person is present and agreed. A face that already matches someone else is refused.
+- **Edit:** anyone's scan can be replaced (with the same agreement tick, and never with a face that matches another person) or deleted. Profiles added here can also be renamed, moved in and out of events, or removed. A person who registered on their own device cannot be renamed from here.
 
 ## Conversation summaries in the preview
 
