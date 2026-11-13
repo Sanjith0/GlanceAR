@@ -30,6 +30,8 @@ export function createGlanceClient(url: string): GlanceDataClient {
     },
     createEvent: (token, title, location) => mutate("createEvent", { token, title, location }),
     joinEvent: (token, inviteCode) => mutate("joinEvent", { token, inviteCode }),
+    joinExternalEvent: (token, source, externalId, title, location) =>
+      mutate("joinExternalEvent", { token, source, externalId, title, location }),
     setEventPermission: (token, eventId, enabled) => mutate("setEventPermission", { token, eventId, enabled }),
     createConversation: (token, eventId, partnerId, mode, source) =>
       mutate("createConversation", { token, eventId, partnerId, ...(mode ? { mode } : {}), ...(source ? { source } : {}) }),

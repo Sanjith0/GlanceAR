@@ -10,6 +10,7 @@ import { isAudioCaptureAvailable } from './capture/audio';
 import { ModeSwitch } from './discover/ModeSwitch';
 import { MatchStatus, SharedWith, byShared, useAutoMatch } from './discover/PeopleMatch';
 import { matchPeople } from './discover/api';
+import { externalJoinHref, peekPendingJoin } from './externalJoin';
 import { MatchName } from './PersonCards';
 const firstName = (name: string) => name.split(' ')[0];
 import { samplePeople } from './demo';
@@ -335,7 +336,8 @@ export function ProfileScreen() {
 
 export function EnrollmentScreen() {
   const app = useGlance(), { busy, perform } = useOperation();
-  const [name, setName] = useState(app.snapshot?.me.name ?? '');
+  // Arriving from "Join with Glance": start from the name the other app passed along.
+  const [name, setName] = useState(app.snapshot?.me.name ?? peekPendingJoin()?.name ?? '');
   const [role, setRole] = useState(app.snapshot?.me.role ?? '');
   const [photo, setPhoto] = useState(app.snapshot?.me.photoUrl ?? '');
   const [accepted, setAccepted] = useState(Boolean(app.snapshot));
@@ -370,7 +372,10 @@ export function EnrollmentScreen() {
       <Text style={[s.small, s.grow]}>Members of events I join can see this name and portrait (if added). Recording and automatic recap sharing are enabled separately, once at event entry.</Text>
     </Pressable>
     <Button busy={busy} disabled={!accepted || !name.trim()} onPress={() => void perform(async () => {
-      await app.saveProfile({ name: name.trim(), role: role.trim(), photoUrl: photo }); router.replace('/events');
+      await app.saveProfile({ name: name.trim(), role: role.trim(), photoUrl: photo });
+      // Someone who signed up in order to join an event goes on to that event.
+      const pending = peekPendingJoin();
+      router.replace(pending ? externalJoinHref(pending) : '/events');
     })}>Save your introduction</Button>
   </Page>;
 }

@@ -29,7 +29,12 @@ export default defineSchema({
     location: v.string(),
     inviteCode: v.string(),
     hostId: v.id("profiles"),
-  }).index("by_invite", ["inviteCode"]),
+    /**
+     * Set when this event was opened from another app's event page ("Join with Glance"),
+     * as "<source>:<their event id>". At most one Glance event has a given key.
+     */
+    externalKey: v.optional(v.string()),
+  }).index("by_invite", ["inviteCode"]).index("by_externalKey", ["externalKey"]),
   memberships: defineTable({
     eventId: v.id("events"),
     profileId: v.id("profiles"),

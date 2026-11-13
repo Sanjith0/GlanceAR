@@ -190,6 +190,8 @@ export interface GlanceDataClient {
   ): () => void;
   createEvent(token: string, title: string, location: string): Promise<string>;
   joinEvent(token: string, inviteCode: string): Promise<string>;
+  /** Find or create the Glance event tied to another app's event, and join it. */
+  joinExternalEvent(token: string, source: string, externalId: string, title: string, location: string): Promise<string>;
   setEventPermission(token: string, eventId: string, enabled: boolean): Promise<void>;
   createConversation(
     token: string,

@@ -9,6 +9,7 @@ import {
 } from "../src/domain";
 import type { Profile, Event, Conversation, Snapshot, FaceDirectory, SightingResult } from "../src/domain";
 import { compactDescriptor, validDescriptors } from "../src/face";
+import { externalKey, isExternalSource, validExternalId } from "../src/externalJoin";
 import { eventPeople, matchingView, savedInterests } from "./peopleView";
 
 const authArgs = { token: v.string() };
@@ -307,6 +308,41 @@ export const joinEvent = mutation({
       await ctx.db.insert("memberships", { eventId: e!._id, profileId: me._id });
     }
     return e!._id;
+  },
+});
+/**
+ * "Join with Glance" from another app's event page. Finds the one Glance event tied to
+ * that outside event, creating it the first time anyone asks, and adds the caller to it.
+ * Mutations run one at a time, so two people tapping together still share one event.
+ * The title and location are whatever the first person's link carried; later links
+ * cannot rename it.
+ */
+export const joinExternalEvent = mutation({
+  args: { ...authArgs, source: v.string(), externalId: v.string(), title: v.string(), location: v.string() },
+  handler: async (ctx, args) => {
+    const me = await authenticate(ctx, args.token);
+    if (!isExternalSource(args.source) || !validExternalId(args.externalId)) fail("This Glance link is not valid.");
+    const title = args.title.trim(), location = args.location.trim();
+    if (!title || title.length > 100 || location.length > 160) fail("Enter a short event title and location.");
+    const key = externalKey(args.source as Parameters<typeof externalKey>[0], args.externalId);
+    const own = await ctx.db.query("memberships").withIndex("by_profile", (q) => q.eq("profileId", me._id)).take(100);
+    const found = await ctx.db.query("events").withIndex("by_externalKey", (q) => q.eq("externalKey", key)).unique();
+    if (!found) {
+      if (own.length >= 100) fail("Event limit reached.");
+      let inviteCode = "";
+      do { inviteCode = Array.from({ length: 4 }, () => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[Math.floor(Math.random() * 32)]).join(""); }
+      while (await ctx.db.query("events").withIndex("by_invite", (q) => q.eq("inviteCode", inviteCode)).unique());
+      const eventId = await ctx.db.insert("events", { title, location, inviteCode, hostId: me._id, externalKey: key });
+      await ctx.db.insert("memberships", { eventId, profileId: me._id });
+      return eventId;
+    }
+    const event = found;
+    if (!own.some((m) => m.eventId === event._id)) {
+      const members = await ctx.db.query("memberships").withIndex("by_event", (q) => q.eq("eventId", event._id)).take(24);
+      if (members.length >= 24 || own.length >= 100) fail("This Glance event is full. Glance events hold up to 24 people.");
+      await ctx.db.insert("memberships", { eventId: event._id, profileId: me._id });
+    }
+    return event._id;
   },
 });
 export const createConversation = mutation({

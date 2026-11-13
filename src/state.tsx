@@ -12,6 +12,7 @@ import { isAudioCaptureAvailable, requestAudioPermission } from './capture/audio
 import { requestGestureCameraPermission } from './capture/GestureCapture';
 import { useSampleMatchInterests } from './discover/store';
 import { withSampleMatching } from './discover/people';
+import type { ExternalJoin } from './externalJoin';
 
 export const deploymentURL = process.env.EXPO_PUBLIC_CONVEX_URL ?? '';
 interface GlanceState {
@@ -33,6 +34,8 @@ interface GlanceState {
   saveProfile: (profile: ProfileInput) => Promise<void>;
   createEvent: (title: string, location: string) => Promise<string>;
   joinEvent: (code: string) => Promise<string>;
+  /** "Join with Glance" from another app's event page: opens the Glance event tied to it. Needs the backend. */
+  joinExternalEvent: (join: ExternalJoin) => Promise<string>;
   setEventPermission: (eventId: string, enabled: boolean) => Promise<void>;
   pair: (eventId: string, partnerId: string) => Promise<string>;
   finishConnection: (id: string, method: 'gesture' | 'button') => Promise<void>;
@@ -159,6 +162,10 @@ export function GlanceProvider({ children }: { children: React.ReactNode }) {
     if (!event) throw new Error('That invitation was not found. Try GL26 for the sample event.');
     dispatch({ type: 'join', eventId: event.id }); return event.id;
   };
+  const joinExternalEvent = async (join: ExternalJoin) => {
+    if (mode !== 'live' || !client) throw new Error('Joining from another app needs the live backend, which this walkthrough does not have.');
+    return client.joinExternalEvent(token, join.source, join.externalId, join.title, join.location);
+  };
   const pair = async (eventId: string, partnerId: string) => {
     if (pairingInFlight.current) throw new Error('Your previous encounter is still being paired.');
     pairingInFlight.current = true;
@@ -236,7 +243,7 @@ export function GlanceProvider({ children }: { children: React.ReactNode }) {
     mode, setMode, snapshot, selectedEvent, selectEvent, error, clearError: () => setError(''),
     loading: mode === 'live' && loading, needsEnrollment: mode === 'live' && needsEnrollment,
     token, client, switchActor: id => dispatch({ type: 'actor', id }), demo: dispatch,
-    run, refresh, saveProfile, createEvent, joinEvent, pair, setEventPermission, finishConnection, sendMessage,
+    run, refresh, saveProfile, createEvent, joinEvent, joinExternalEvent, pair, setEventPermission, finishConnection, sendMessage,
     captureSource, setCaptureSource, phoneCaptureReady, preparePhoneCapture, captureChoiceLocked,
     saveFaceScan, deleteFaceScan, addDemoPerson, reportSighting,
     demoFaceDirectory: eventId => demoFaceDirectory(sample, eventId),

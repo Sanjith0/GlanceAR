@@ -93,6 +93,19 @@ How it works:
 - **Platform limits:** recognition runs in browsers (desktop, and phone browsers over HTTPS or localhost). The iPhone app shows a placeholder until the same model is ported natively; templates from a different model would never match. In live mode, browsers record too: the conversation's recording device (whoever's phone reported first) uses its own microphone in Safari or Chrome over HTTPS, holds the same server lease as the native recorder, and uploads one 16 kHz WAV when the conversation finishes. LIVE Camera runs the same three-second hold, countdown and green flash as the demo before reporting a sighting.
 
 
+## Join with Glance (from another app's event page)
+
+Another app can send people into a Glance event with one link:
+
+```
+https://glancear.vercel.app/#/join?source=metaintros&id=<their event id>&title=<title>&place=<venue>&name=<person's name>
+```
+
+- **One Glance event per outside event.** The first person to open the link creates the Glance event; everyone after joins the same one. The title and venue come from that first link and are not changed by later ones.
+- **New people sign up first.** Someone without a Glance profile is asked for a name (prefilled from `name`), then lands in the event.
+- **What is accepted.** `source` must be on the allow list in `src/externalJoin.ts` (currently `metaintros`), and `id` is letters, digits, dash and underscore, at most 64. Anything else shows "This link does not open an event." and does nothing.
+- **Limits.** A Glance event holds 24 people; the 25th sees that it is full. The link needs the backend, so the sample walkthrough only explains that.
+
 ## Demo mode: Dev tools and every scanned face
 
 One backend switch turns on two things meant for demos:
