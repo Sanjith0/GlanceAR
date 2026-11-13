@@ -94,7 +94,27 @@ final class GlassesCamera: ObservableObject {
       return failed("No Meta glasses found. Turn them on, pair them in Meta AI, then retry.")
     }
     do {
-      let session = try Wearables.shared.createSession(deviceSelector: AutoDeviceSelector(wearables: Wearables.shared))
+      // The auto selector can still be empty when created, so give it a moment, then fall back to
+      // pinning a device that is connected and compatible right now.
+      let auto = AutoDeviceSelector(wearables: Wearables.shared)
+      var waited = 0
+      while auto.activeDevice == nil, waited < 30 {
+        try await Task.sleep(nanoseconds: 100_000_000)
+        waited += 1
+      }
+      guard epoch == current else { return }
+      let selector: any DeviceSelector
+      if auto.activeDevice != nil {
+        selector = auto
+      } else if let id = Wearables.shared.devices.first(where: { id in
+        guard let d = Wearables.shared.deviceForIdentifier(id) else { return false }
+        return d.linkState == .connected && d.compatibility() == .compatible
+      }) {
+        selector = SpecificDeviceSelector(device: id)
+      } else {
+        selector = auto
+      }
+      let session = try Wearables.shared.createSession(deviceSelector: selector)
       self.session = session
       let tokens = ListenerTokenBag()
       self.tokens = tokens
@@ -147,8 +167,38 @@ final class GlassesCamera: ObservableObject {
       status = "Starting glasses video…"
       camera.stream.start()
     } catch {
-      failed("Could not start the glasses camera: \(error.localizedDescription)")
+      if (error as? DeviceSessionError) == .noEligibleDevice {
+        failed("No eligible glasses. \(deviceReport())")
+      } else {
+        failed("Could not start the glasses camera: \(error.localizedDescription)")
+      }
     }
+  }
+
+  /// Says why each paired device was rejected (connection, firmware/SDK compatibility), so the
+  /// failure is actionable instead of a generic "no eligible device".
+  private func deviceReport() -> String {
+    let ids = Wearables.shared.devices
+    guard !ids.isEmpty else { return "No glasses are paired." }
+    return ids.map { id -> String in
+      guard let device = Wearables.shared.deviceForIdentifier(id) else { return "A paired device is unavailable." }
+      let link: String
+      switch device.linkState {
+      case .connected: link = "connected"
+      case .connecting: link = "connecting"
+      case .disconnected: link = "not connected (turn them on, open or wear them, check Meta AI)"
+      }
+      let fit: String
+      switch device.compatibility() {
+      case .compatible: fit = "compatible"
+      case .deviceUpdateRequired: fit = "glasses firmware update required"
+      case .sdkUpdateRequired: fit = "Glance needs a newer Meta SDK"
+      case .undefined: fit = "compatibility not reported yet"
+      }
+      let worn = device.donState == .donned ? "worn" : device.donState == .doffed ? "not worn" : "wear state unknown"
+      let hinge = device.hingeState == .open ? "open" : device.hingeState == .closed ? "folded" : "hinge unknown"
+      return "\(device.name): \(link); \(fit); \(worn); \(hinge)."
+    }.joined(separator: " ")
   }
 
   private func fail(_ message: String, for current: UUID) {
