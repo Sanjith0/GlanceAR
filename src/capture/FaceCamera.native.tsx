@@ -4,7 +4,9 @@ import { Icon } from '../components';
 import { colors, s } from '../theme';
 import type { FaceBox } from '../face';
 
-export type FaceFrame = { faces: { box: FaceBox; score: number; descriptor?: number[] }[]; width: number; height: number; sampledAt: number; crop: (box: FaceBox) => string; farSamples: (box: FaceBox) => Promise<number[][]> };
+export type FaceFrame = { faces: { box: FaceBox; score: number; descriptor?: number[]; landmarks?: [number, number][] }[]; width: number; height: number; sampledAt: number; crop: (box: FaceBox) => string; farSamples: (box: FaceBox) => Promise<number[][]> };
+/** Mirrors the browser type; the native build has no guided scan yet. */
+export type ScanGuide = { landmarks: [number, number][] | null; bins: boolean[]; centerProgress: number; aim: number | null };
 export type FaceOverlay = {
   key: string; box: FaceBox; title: string; detail?: string; points?: string[];
   tone: 'match' | 'self' | 'unknown' | 'scan';
@@ -12,7 +14,7 @@ export type FaceOverlay = {
 export type FaceCameraProps = {
   active: boolean; scopeId?: string; overlays: FaceOverlay[];
   onFrame: (frame: FaceFrame) => void; onCameraReset?: () => void; style?: StyleProp<ViewStyle>;
-  device?: 'phone' | 'glasses'; far?: boolean;
+  device?: 'phone' | 'glasses'; far?: boolean; guide?: ScanGuide | null; preferFront?: boolean; fast?: boolean;
 };
 
 /**

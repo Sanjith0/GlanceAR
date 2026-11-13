@@ -18,6 +18,11 @@ export default defineSchema({
     name: v.string(),
     role: v.string(),
     photoUrl: v.string(),
+    /**
+     * Set on profiles created from the Dev tab. They have no device: their tokenHash is
+     * "managed:<id>", which no device credential can hash to, so nobody can sign in as them.
+     */
+    managedBy: v.optional(v.literal("dev")),
   }).index("by_token", ["tokenHash"]),
   events: defineTable({
     title: v.string(),
@@ -34,6 +39,11 @@ export default defineSchema({
       grantedAt: v.optional(v.number()),
       revision: v.number(),
     })),
+    /**
+     * Dev-tab members: LIVE Camera may recognize them in this event, but this is not a
+     * recording grant, so no conversation can be started with them.
+     */
+    recognition: v.optional(v.literal("dev")),
   })
     .index("by_event", ["eventId"])
     .index("by_profile", ["profileId"])
@@ -95,6 +105,8 @@ export default defineSchema({
     descriptors: v.array(v.array(v.float64())),
     policyVersion: v.string(),
     consentedAt: v.number(),
+    /** Saved from the Dev tab, where the operator confirmed the person agreed. */
+    attestedBy: v.optional(v.literal("dev")),
   }).index("by_profile", ["profileId"]),
   // "observer's camera recognized seen" claims. Short-lived; two opposite fresh rows pair.
   sightings: defineTable({

@@ -17,7 +17,10 @@ export const MIN_FAR_FACE_WIDTH = 36;
 /** Below this width a descriptor is noisier, so a match must clear a wider margin. */
 export const SMALL_FACE_WIDTH = 64;
 export const SMALL_FACE_MARGIN = 0.1;
-export const MIN_SCAN_FACE_WIDTH = 110;
+/** Smallest face a scan accepts when the frame size is unknown. */
+export const MIN_SCAN_FACE_WIDTH = 80;
+/** With a known frame, a scan needs the face to span this share of its shorter side (never under 72 px). */
+export const MIN_SCAN_FACE_SHARE = 0.12;
 
 export function validDescriptors(descriptors: unknown): descriptors is number[][] {
   return Array.isArray(descriptors) && descriptors.length >= 1 && descriptors.length <= FACE_MAX_DESCRIPTORS
@@ -60,12 +63,18 @@ export function consistentSamples(samples: number[][]): boolean {
 }
 
 /** Why this frame can't be used for a face scan, or null when it can. */
-export function scanProblem(faces: { box: FaceBox; score: number }[]): string | null {
+export function scanProblem(
+  faces: { box: FaceBox; score: number }[], frame?: { width: number; height: number }, turning = false,
+): string | null {
   if (!faces.length) return 'Look at the camera. No face found yet.';
-  if (faces.length > 1) return 'Only the person being scanned should be in frame.';
-  if (faces[0].box.width < MIN_SCAN_FACE_WIDTH) return 'Move a little closer.';
+  // People well behind the person being scanned are ignored; two faces of similar size are not.
+  const [main, other] = [...faces].sort((a, b) => b.box.width - a.box.width);
+  if (other && other.box.width >= main!.box.width * 0.6) return 'Only the person being scanned should be in frame.';
+  const needed = frame ? Math.max(72, Math.min(frame.width, frame.height) * MIN_SCAN_FACE_SHARE) : MIN_SCAN_FACE_WIDTH;
+  if (main!.box.width < needed) return 'Move a little closer.';
   // The tiny detector often scores clear frontal faces at 0.6–0.7; sample consistency is the real guard.
-  if (faces[0].score < 0.6) return 'Face the camera in good light.';
+  // A turned head scores lower by nature, so the turning phase does not ask for it.
+  if (!turning && main!.score < 0.6) return 'Face the camera in good light.';
   return null;
 }
 

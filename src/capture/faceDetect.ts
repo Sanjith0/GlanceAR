@@ -12,7 +12,11 @@ import { compactDescriptor, MIN_FACE_WIDTH, MIN_FAR_FACE_WIDTH, type FaceBox } f
  * glasses-sized frame, faces were found down to about 36 px wide (the old pass lost
  * them below 64 px).
  */
-export type DetectedFace = { box: FaceBox; score: number; descriptor?: number[] };
+export type DetectedFace = {
+  box: FaceBox; score: number; descriptor?: number[];
+  /** The 68 face landmarks in source pixels. Only from the close-up (non-far) pass, for the guided scan. */
+  landmarks?: [number, number][];
+};
 export type FaceApi = typeof import('@vladmandic/face-api');
 type Source = HTMLVideoElement | HTMLCanvasElement;
 
@@ -118,6 +122,8 @@ export async function detectFacesWith(faceapi: FaceApi, source: Source, options:
       const { x, y, width, height } = result.detection.box;
       return {
         box: { x, y, width, height }, score: result.detection.score,
+        landmarks: result.landmarks.positions.map((point): [number, number] =>
+          [Math.round(point.x * 10) / 10, Math.round(point.y * 10) / 10]),
         // Too-small faces produce unreliable descriptors; they are shown but never matched.
         ...(width >= MIN_FACE_WIDTH ? { descriptor: compactDescriptor(result.descriptor) } : {}),
       };

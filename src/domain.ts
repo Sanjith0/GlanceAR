@@ -7,6 +7,11 @@ export interface Profile {
   /** Only present on me/members when a specific event is selected. */
   glanceEnabled?: boolean;
   /**
+   * Added from the Dev tab. LIVE Camera recognizes them, but they have no device in
+   * Glance, so their Glance is never on and no conversation can start with them.
+   */
+  managed?: boolean;
+  /**
    * People matching, on other members of the selected event and only when you
    * both turned it on: the interests from your own list that they share.
    */
@@ -146,7 +151,7 @@ export interface FaceDirectory {
   enabled: boolean;
   /** Whether the viewer has a saved face scan others can recognize. */
   scanned: boolean;
-  /** Enabled event members with a face scan, including the viewer (shown as "You"). */
+  /** Enabled event members with a face scan, including the viewer (shown as "You"), plus people added from the Dev tab. */
   templates: FaceTemplate[];
 }
 
@@ -250,8 +255,10 @@ export const FACE_DESCRIPTOR_LENGTH = 128;
 export const FACE_SCAN_SAMPLES = 3;
 /** Extra descriptors of the same face shrunk to look distant, so people are recognized from farther away. */
 export const FACE_FAR_SAMPLES = 3;
+/** Extra descriptors from the guided scan, one per head direction around the ring. */
+export const FACE_ANGLE_SAMPLES = 8;
 /** Most descriptors one saved scan may hold. */
-export const FACE_MAX_DESCRIPTORS = FACE_SCAN_SAMPLES + FACE_FAR_SAMPLES;
+export const FACE_MAX_DESCRIPTORS = FACE_SCAN_SAMPLES + FACE_ANGLE_SAMPLES + FACE_FAR_SAMPLES;
 /** Face widths (pixels) the far samples are shrunk to. */
 export const FACE_FAR_WIDTHS = [64, 48, 36];
 /** Blur (px) applied to each far sample: the farthest are softest, like a distant face from a moving camera. */
@@ -261,3 +268,27 @@ export const SIGHTING_WINDOW_MS = 8_000;
 export const SIGHTING_REPORT_INTERVAL_MS = 1_000;
 /** The preview's fictional face database cap. */
 export const DEMO_FACE_LIMIT = 5;
+
+/** Dev tab: one person with a face scan, or a Dev-added profile without one. */
+export interface DevPerson {
+  id: string;
+  name: string;
+  role: string;
+  /** Created from the Dev tab (no device). Only these can be renamed, rescanned or removed. */
+  managed: boolean;
+  scan: {
+    samples: number;
+    consentedAt: number;
+    /** False when the scan was made by an older model or terms and is ignored until redone. */
+    current: boolean;
+  } | null;
+  events: { id: string; title: string; recognized: boolean }[];
+}
+export interface DevOverview {
+  events: { id: string; title: string }[];
+  people: DevPerson[];
+  /** True when there were more scans than this view lists. */
+  truncated: boolean;
+}
+/** Most people the Dev tab lists at once. */
+export const DEV_PEOPLE_LIMIT = 60;

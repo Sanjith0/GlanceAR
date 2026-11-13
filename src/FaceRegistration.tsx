@@ -1,21 +1,19 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Platform, Pressable, Text, View, useWindowDimensions } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Badge, Button, Empty, Field, Icon, Notice, Page, Portrait } from './components';
 import { colors, s } from './theme';
 import { useFaceDirectory, useGlance } from './state';
 import { DemoBanner, GlobalStatus, useOperation, useScreenFocused } from './screens';
-import FaceCamera, { preloadFaceModels, type FaceFrame, type FaceOverlay } from './capture/FaceCamera';
-import { consistentSamples, faceDistance, keepFarSamples, MATCH_THRESHOLD, scanProblem } from './face';
-import { DEMO_FACE_LIMIT, FACE_SCAN_SAMPLES } from './domain';
+import { preloadFaceModels } from './capture/FaceCamera';
+import { faceDistance, MATCH_THRESHOLD } from './face';
+import { DEMO_FACE_LIMIT } from './domain';
+import { GuidedFaceScan, saveScanSets, type ScanResult, type ScanStop } from './GuidedFaceScan';
 
 type ScanTarget = { profileId?: string; name: string; role: string };
-/** startedAt is set by the first camera frame, so slow permission prompts don't eat the scan time. */
-type ScanRun = { target: ScanTarget; samples: number[][]; lastAt: number; startedAt: number; portrait?: string };
 /** The camera sheet: a new attendee still being named, or a scan in progress. */
-type Sheet = { kind: 'new'; name: string; role: string } | { kind: 'scan'; target: ScanTarget; count: number; hint: string };
+type Sheet = { kind: 'new'; name: string; role: string } | { kind: 'scan'; target: ScanTarget };
 const firstName = (name: string) => name.split(' ')[0];
-const SCAN_TIMEOUT_MS = 25_000;
 
 /**
  * Step 1 of LIVE Camera: register faces. The camera stays off until Add user or
@@ -48,84 +46,37 @@ export function FaceRegistrationScreen() {
 
   const [notice, setNotice] = useState<{ text: string; error?: boolean } | null>(null);
   const [sheet, setSheet] = useState<Sheet | null>(null);
-  const [overlays, setOverlays] = useState<FaceOverlay[]>([]);
-  const scan = useRef<ScanRun | null>(null);
 
   // Leaving the screen closes the camera and abandons any unsaved scan.
-  useFocusEffect(useCallback(() => () => { scan.current = null; setSheet(null); setOverlays([]); }, []));
+  useFocusEffect(useCallback(() => () => { setSheet(null); }, []));
 
-  const closeCamera = useCallback((message?: { text: string; error?: boolean }) => {
-    scan.current = null;
-    setSheet(null); setOverlays([]);
-    setNotice(message ?? null);
-  }, []);
-  const startScan = useCallback((target: ScanTarget) => {
-    scan.current = { target, samples: [], lastAt: 0, startedAt: 0 };
-    setNotice(null); setOverlays([]);
-    setSheet({ kind: 'scan', target, count: 0, hint: 'Look at the camera with only this person in frame.' });
-  }, []);
-
-  const onFrame = useCallback((frame: FaceFrame) => {
-    const run = scan.current;
-    if (!run) {
-      // Naming a new attendee: show the framing so they can line up before scanning.
-      setOverlays(frame.faces.map((face, i) => ({ key: `preview-${i}`, box: face.box, tone: 'unknown',
-        title: frame.faces.length > 1 ? 'Only one person in frame' : 'Ready to scan' })));
-      return;
-    }
-    const now = Date.now();
-    if (!run.startedAt) run.startedAt = now;
-    const problem = scanProblem(frame.faces);
-    setOverlays(frame.faces.map((face, i) => ({ key: `scan-${i}`, box: face.box, tone: 'scan',
-      title: problem ?? `Scanning ${firstName(run.target.name)} · ${run.samples.length}/${FACE_SCAN_SAMPLES}` })));
-    if (now - run.startedAt > SCAN_TIMEOUT_MS) {
-      closeCamera({ text: 'The scan timed out. Try again facing the camera in good light.', error: true });
-      return;
-    }
-    if (problem) { setSheet(view => view?.kind === 'scan' ? { ...view, hint: problem } : view); return; }
-    const face = frame.faces[0];
-    if (!face.descriptor || now - run.lastAt < 350) return;
-    run.samples.push(face.descriptor);
-    run.lastAt = now;
-    if (!run.target.profileId && !run.portrait) run.portrait = frame.crop(face.box);
-    if (run.samples.length < FACE_SCAN_SAMPLES) {
-      setSheet({ kind: 'scan', target: run.target, count: run.samples.length, hint: 'Hold still…' });
-      return;
-    }
-    if (!consistentSamples(run.samples)) {
-      run.samples = []; run.portrait = undefined;
-      setSheet({ kind: 'scan', target: run.target, count: 0, hint: 'Those frames didn’t look like one person. Hold still; starting over.' });
-      return;
-    }
-    const { target, samples, portrait } = run;
-    // Start drawing the distant-looking samples now: the camera closes in a moment.
-    const farSamples = frame.farSamples(face.box).catch(() => [] as number[][]);
-    // One face, one attendee: never save a scan that already matches someone else.
-    const clash = templates.find(t => t.profileId !== target.profileId
-      && t.descriptors.some(d => samples.some(sample => faceDistance(sample, d) < MATCH_THRESHOLD)));
-    closeCamera();
-    if (clash) {
-      setNotice({ text: `This face already matches ${people.get(clash.profileId)?.name ?? 'another attendee'}’s scan, so it wasn’t saved.`, error: true });
-      return;
-    }
+  const stopScan = useCallback((reason: ScanStop) => { setSheet(null); setNotice(reason); }, []);
+  const startScan = useCallback((target: ScanTarget) => { setNotice(null); setSheet({ kind: 'scan', target }); }, []);
+  const target = sheet?.kind === 'scan' ? sheet.target : null;
+  // One face, one attendee: never save a scan that already matches someone else.
+  const clash = useCallback((center: number[][]) => {
+    const taken = templates.find(t => t.profileId !== target?.profileId
+      && t.descriptors.some(d => center.some(sample => faceDistance(sample, d) < MATCH_THRESHOLD)));
+    return taken ? `This face already matches ${people.get(taken.profileId)?.name ?? 'another attendee'}’s scan, so it wasn’t saved.` : null;
+  }, [templates, people, target?.profileId]);
+  const saveScan = useCallback((result: ScanResult) => {
+    if (!target) return;
+    setSheet(null); setNotice(null);
     void perform(async () => {
-      const profileId = target.profileId ?? app.addDemoPerson(id, target.name, target.role, portrait!);
-      const far = keepFarSamples(samples, await farSamples);
-      try { await app.saveFaceScan(profileId, [...samples, ...far]); } catch (error) {
-        // A backend that has not been redeployed only accepts the close-up samples.
-        if (!far.length) throw error;
-        await app.saveFaceScan(profileId, samples);
-      }
+      const profileId = target.profileId ?? app.addDemoPerson(id, target.name, target.role, result.portrait ?? '');
+      await saveScanSets(result, descriptors => app.saveFaceScan(profileId, descriptors));
       setNotice({ text: `${firstName(target.name)} is registered${app.mode === 'live'
         ? ' and synced to everyone with Glance on in this event.' : '. Scans stay in this tab’s memory.'}` });
     });
-  }, [templates, people, closeCamera, perform, app, id]);
+  }, [target, perform, app, id]);
 
   const registered = templates.filter(t => people.has(t.profileId)).length;
   const ready = app.mode === 'live' ? Boolean(directory?.scanned) : registered > 0;
   const cameraActive = focused && enabled && Boolean(sheet) && Platform.OS === 'web';
-  const cameraWidth = Math.max(240, Math.min(Math.min(width, 520) - 48, (height - 360) * 4 / 3));
-  const cameraSize = { width: cameraWidth, height: cameraWidth * 3 / 4 };
+  // A square window, so the scan circle and its ring fit whichever way the camera is held.
+  const cameraWidth = Math.max(240, Math.min(Math.min(width, 520) - 48, height - 330));
+  // In live mode every scan is of yourself, so open the front camera; the preview scans other people.
+  const selfScan = app.mode === 'live' || (target !== null && target.profileId === me?.id);
   const canAdd = app.mode === 'demo' && members.length < DEMO_FACE_LIMIT;
   const meHas = Boolean(directory?.scanned);
 
@@ -134,27 +85,21 @@ export function FaceRegistrationScreen() {
       <Text style={s.heading}>{sheet.kind === 'new' ? 'Add user' : `Scanning ${sheet.target.name}`}</Text>
       <Badge>CAMERA ON</Badge>
     </View>
-    <View style={[cameraSize, { alignSelf: 'center', borderRadius: 20, overflow: 'hidden' }]}>
-      <FaceCamera active={cameraActive} scopeId={`register:${id}:${app.mode}:${me?.id ?? 'unregistered'}`}
-        overlays={overlays} onFrame={onFrame} style={cameraSize} />
-    </View>
-    {sheet.kind === 'new' ? <View style={{ gap: 12 }}>
-      <Field label="Their name" value={sheet.name} maxLength={80} placeholder="Who are you scanning?"
-        onChangeText={name => setSheet({ ...sheet, name })} />
-      <Field label="One-line introduction" value={sheet.role} maxLength={120} placeholder="Designer · creative tools"
-        onChangeText={role => setSheet({ ...sheet, role })} />
-      <View style={s.row}>
-        <View style={s.grow}><Button icon="camera" disabled={!sheet.name.trim() || busy}
-          onPress={() => startScan({ name: sheet.name.trim(), role: sheet.role.trim() })}>Start scan</Button></View>
-        <View style={s.grow}><Button tone="ghost" onPress={() => closeCamera({ text: 'Cancelled. Nobody was added.' })}>Cancel</Button></View>
-      </View>
-    </View> : <View style={[s.soft, s.between]}>
-      <View style={[s.grow, { gap: 2 }]}>
-        <Text style={s.label}>{`${sheet.count}/${FACE_SCAN_SAMPLES} samples`}</Text>
-        <Text style={s.small}>{sheet.hint}</Text>
-      </View>
-      <View style={{ width: 120 }}><Button tone="ghost" onPress={() => closeCamera({ text: 'Scan cancelled. Nothing was saved.' })}>Cancel</Button></View>
-    </View>}
+    <GuidedFaceScan active={cameraActive} scopeId={`register:${id}:${app.mode}:${me?.id ?? 'unregistered'}`}
+      running={sheet.kind === 'scan'} preferFront={selfScan} wantPortrait={target !== null && !target.profileId}
+      size={cameraWidth} clash={clash} onDone={saveScan} onStop={stopScan}>
+      {sheet.kind === 'new' && <View style={{ gap: 12 }}>
+        <Field label="Their name" value={sheet.name} maxLength={80} placeholder="Who are you scanning?"
+          onChangeText={name => setSheet({ ...sheet, name })} />
+        <Field label="One-line introduction" value={sheet.role} maxLength={120} placeholder="Designer · creative tools"
+          onChangeText={role => setSheet({ ...sheet, role })} />
+        <View style={s.row}>
+          <View style={s.grow}><Button icon="camera" disabled={!sheet.name.trim() || busy}
+            onPress={() => startScan({ name: sheet.name.trim(), role: sheet.role.trim() })}>Start scan</Button></View>
+          <View style={s.grow}><Button tone="ghost" onPress={() => stopScan({ text: 'Cancelled. Nobody was added.' })}>Cancel</Button></View>
+        </View>
+      </View>}
+    </GuidedFaceScan>
   </View>;
 
   return <Page back title="Register faces" footer={event && enabled && !sheet ? <>

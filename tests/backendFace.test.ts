@@ -51,9 +51,9 @@ describe("face scans", () => {
     await expect(t.mutation(api.saveFaceScan, { token: tokens[0], ...scan(0), policyVersion: "old" })).rejects.toThrow(/face scan terms/);
     await expect(t.mutation(api.saveFaceScan, { token: tokens[0], ...scan(0), descriptors: [face(0).slice(1)] })).rejects.toThrow(/incomplete/);
     await expect(t.mutation(api.saveFaceScan, { token: tokens[0], ...scan(0), descriptors: [face(0).map(() => 2)] })).rejects.toThrow(/incomplete/);
-    await expect(t.mutation(api.saveFaceScan, { token: tokens[0], ...scan(0), descriptors: [0, 1, 2, 3, 4, 5, 6].map((i) => face(0, i)) })).rejects.toThrow(/incomplete/);
-    // Three close-up plus three far samples are accepted.
-    await t.mutation(api.saveFaceScan, { token: tokens[0], ...scan(0), descriptors: [0, 1, 2, 3, 4, 5].map((i) => face(0, i)) });
+    await expect(t.mutation(api.saveFaceScan, { token: tokens[0], ...scan(0), descriptors: Array.from({ length: 15 }, (_, i) => face(0, i)) })).rejects.toThrow(/incomplete/);
+    // Three straight-on, eight angled and three far samples are accepted.
+    await t.mutation(api.saveFaceScan, { token: tokens[0], ...scan(0), descriptors: Array.from({ length: 14 }, (_, i) => face(0, i)) });
   });
 
   it("stays in sync as attendees scan, join, enable, pause, rescan and delete", async () => {

@@ -8,6 +8,9 @@ import { FACE_FAR_BLURS, FACE_FAR_WIDTHS } from '../domain';
 import { acquireLiveCameraStream, type LiveCameraLease } from './liveCameraStream';
 import { acquireGlassesStream, type CameraDevice } from './glassesBridge';
 import { startFreshFaceFrames } from './faceFrameFreshness';
+import { FaceScanGuide, type ScanGuide } from './FaceScanGuide';
+
+export type { ScanGuide };
 
 export type FaceFrame = { faces: DetectedFace[]; width: number; height: number; sampledAt: number; crop: (box: FaceBox) => string;
   /** This face shrunk to look distant, as descriptors, for saving with a scan. Draws immediately. */
@@ -27,6 +30,12 @@ export type FaceCameraProps = {
   device?: CameraDevice;
   /** Also find and read small, distant faces (costs a little more per frame). For recognition, not registration. */
   far?: boolean;
+  /** The guided scan's wireframe, circle and ring, drawn over the video. */
+  guide?: ScanGuide | null;
+  /** Open the front camera first (a self-scan); the flip button still switches. */
+  preferFront?: boolean;
+  /** Sample frames more often, for a smoother guided scan. */
+  fast?: boolean;
   style?: StyleProp<ViewStyle>;
 };
 
@@ -41,10 +50,10 @@ const tones = {
 /** Fetch and warm the face models ahead of time (no camera access). */
 export { preloadFaceEngine as preloadFaceModels } from './faceEngine';
 
-export default function FaceCamera({ active, scopeId = 'live:camera', overlays, onFrame, onCameraReset, device = 'phone', far = false, style }: FaceCameraProps) {
+export default function FaceCamera({ active, scopeId = 'live:camera', overlays, onFrame, onCameraReset, device = 'phone', far = false, guide = null, preferFront = false, fast = false, style }: FaceCameraProps) {
   const video = useRef<HTMLVideoElement | null>(null);
   const [status, setStatus] = useState('Starting camera…');
-  const [facing, setFacing] = useState<'environment' | 'user'>('environment');
+  const [facing, setFacing] = useState<'environment' | 'user'>(preferFront ? 'user' : 'environment');
   const [mirrored, setMirrored] = useState(true);
   const [cameras, setCameras] = useState(0);
   const [source, setSource] = useState({ width: 0, height: 0 });
@@ -52,7 +61,7 @@ export default function FaceCamera({ active, scopeId = 'live:camera', overlays, 
   const [visible, setVisible] = useState(() => typeof document === 'undefined' || document.visibilityState === 'visible');
   const [visibilityEpoch, setVisibilityEpoch] = useState(0);
   const supported = faceEngineSupported();
-  const identity = JSON.stringify([active, scopeId, facing, visible, visibilityEpoch, supported, device, far]);
+  const identity = JSON.stringify([active, scopeId, facing, visible, visibilityEpoch, supported, device, far, fast]);
   const latest = useRef({ identity, onFrame, onCameraReset, blocked: !active || !visible });
   const committedIdentity = useRef<string | null>(null);
   const [renderedIdentity, setRenderedIdentity] = useState(identity);
@@ -148,7 +157,7 @@ export default function FaceCamera({ active, scopeId = 'live:camera', overlays, 
         setStatus('Live');
         stopFrames = startFreshFaceFrames({
           video: element, detectFaces: v => detectFaces(v, { far }), isCurrent: current, isLive: liveTrack, isVisible: documentVisible,
-          onReset: reset, onStopped: cameraStopped,
+          onReset: reset, onStopped: cameraStopped, intervalMs: fast ? 40 : undefined,
           onFrame: frame => {
             if (!current() || !liveTrack() || !documentVisible()) return;
             setSource(old => old.width === frame.width && old.height === frame.height
@@ -184,7 +193,7 @@ export default function FaceCamera({ active, scopeId = 'live:camera', overlays, 
       lease?.release();
       if (element) element.srcObject = null;
     };
-  }, [active, visible, supported, facing, scopeId, device, far, identity]);
+  }, [active, visible, supported, facing, scopeId, device, far, fast, identity]);
 
   const shown = !active || !visible ? 'Camera off'
     : !supported ? 'This browser can’t open the camera here. Use a current browser over HTTPS or localhost.' : status;
@@ -193,6 +202,7 @@ export default function FaceCamera({ active, scopeId = 'live:camera', overlays, 
     <video ref={video} muted playsInline autoPlay aria-label="LIVE Camera view"
       style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover',
         transform: mirrored ? 'scaleX(-1)' : undefined, opacity: active && visible ? 1 : 0 }} />
+    {live && guide && source.width > 0 && <FaceScanGuide guide={guide} source={source} view={view} mirrored={mirrored} />}
     {live && source.width > 0 && overlays.map(overlay => {
       const box = projectBox(overlay.box, source, view, mirrored);
       const tone = tones[overlay.tone];

@@ -21,6 +21,8 @@ export function startFreshFaceFrames<Face>(options: {
   onReset: () => void;
   onStopped: () => void;
   onError: (error: unknown) => void;
+  /** Pause between frames. 120 ms by default; the guided scan uses less so its wireframe moves smoothly. */
+  intervalMs?: number;
 }) {
   let stopped = false;
   let lastVideoTime = -Infinity;
@@ -51,7 +53,7 @@ export function startFreshFaceFrames<Face>(options: {
       if (current()) { reset(); if (current()) options.onError(error); }
       return;
     }
-    if (current()) timer = setTimeout(() => { void loop(); }, 120);
+    if (current()) timer = setTimeout(() => { void loop(); }, options.intervalMs ?? 120);
   };
   void loop();
   return () => { stopped = true; clearTimeout(timer); };

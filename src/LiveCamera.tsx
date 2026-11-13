@@ -296,8 +296,10 @@ export function LiveCameraScreen() {
     }
     if (!directory?.scanned) return;
     const t = performance.now();
+    // Only people with Glance on can be paired. Someone added from the Dev tab is
+    // recognized and gets a card, but has no device, so no countdown starts for them.
     const partnerIds = results.flatMap(({ match }) =>
-      match && match.profileId !== me?.id && people.has(match.profileId) ? [match.profileId] : []);
+      match && match.profileId !== me?.id && people.get(match.profileId)?.glanceEnabled ? [match.profileId] : []);
     const held = liveHeld.current;
     if (held) {
       if (partnerIds.includes(held.id)) { held.seenAt = t; report(held.id, now); }

@@ -74,7 +74,7 @@ Preview state is memory-only and resets on reload. Alex, Sam, their AI-generated
 
 From an enabled event, choose **LIVE Camera**. In the preview:
 
-1. **Register faces (step 1).** The camera stays off. Tick the consent box, then use **Add user** (name, intro, face scan) or the **Scan my face** / **Scan face** buttons on the list, up to five people. The camera opens only for the scan, takes three consistent close-up samples plus three more of the same face shrunk to look distant, the farther ones slightly blurred (so people are recognized from farther away), then closes and the person appears under **Registered users**. In live mode your scan belongs to your profile, which this browser keeps across reloads, so you scan once and not at every event. Cancel, a timeout, a duplicate face or a camera-permission error closes the camera without saving.
+1. **Register faces (step 1).** The camera stays off. Tick the consent box, then use **Add user** (name, intro, face scan) or the **Scan my face** / **Scan face** buttons on the list, up to five people. The camera opens only for the scan, which is guided like a phone's face unlock: a wireframe follows the face inside a circle, three straight-on samples are taken, then a ring of ticks turns green as the head moves around, saving one sample per direction (up to eight). Three more samples of the straight-on face shrunk to look distant, the farther ones slightly blurred, are added so people are recognized from farther away. The ring step can be finished early and saves itself after 30 seconds; then the camera closes and the person appears under **Registered users**. A scan asks you to move closer only when the face spans under 12% of the frame's shorter side, and it ignores people well behind you. In live mode your scan belongs to your profile, which this browser keeps across reloads, so you scan once and not at every event. Cancel, a timeout, a duplicate face or a camera-permission error closes the camera without saving.
 2. **Recognize (step 2).** Tap **Next**. LIVE Camera opens the camera automatically. **Edit registered users** returns to step 1; scans persist across both pages.
 3. Bring yourself and exactly one other registered, enabled attendee into the same camera view. The other person gets a green box, their name and talking points; your own scan shows as **You**. An unregistered face does not count.
 4. Keep both faces recognized for the visible **3, 2, 1** countdown. For the final 2.5 seconds the camera window pulses green with **Initiating conversation · Connection building**. Losing either face, changing the pair, adding an extra face, stopping the camera, or changing a scan resets the hold. Only a fresh frame sampled after the full three seconds can start the conversation; a timer or frozen video cannot.
@@ -91,6 +91,21 @@ How it works:
 - **Synced database (live backend):** `faceDirectory` is a reactive Convex query, so every open LIVE Camera updates the moment an attendee joins, enables, pauses, rescans or deletes. It returns only members who have Glance enabled and a face scan, and only to viewers who enabled Glance themselves.
 - **Mutual pairing:** each phone calls `reportSighting` about once a second while it steadily recognizes someone. When both directions arrive within `SIGHTING_WINDOW_MS`, one event-mode conversation is created; Convex serializes the race, so both phones open the same conversation. Fresh sightings are needed for every new encounter.
 - **Platform limits:** recognition runs in browsers (desktop, and phone browsers over HTTPS or localhost). The iPhone app shows a placeholder until the same model is ported natively; templates from a different model would never match. In live mode, browsers record too: the conversation's recording device (whoever's phone reported first) uses its own microphone in Safari or Chrome over HTTPS, holds the same server lease as the native recorder, and uploads one 16 kHz WAV when the conversation finishes. LIVE Camera runs the same three-second hold, countdown and green flash as the demo before reporting a sighting.
+
+
+## Dev tools (hidden)
+
+On a build with a backend, tapping the **Connections** tab six times quickly opens a hidden **Dev tools** screen that lists every face scan and manages profiles for people who do not have the app.
+
+```sh
+npx convex env set GLANCE_DEV_TOOLS enabled   # unset, or any other value, turns Dev tools off
+```
+
+- **No key:** the shortcut only hides the screen. The backend functions behind it are public, so while the switch above is on, anyone who knows they exist can list names and events, add profiles and delete face scans without the app. Turn the switch off on any backend where that is not acceptable.
+- **See:** everyone with a face scan (newest 60), with sample count, scan date, whether they registered on their own device or were added here, and the events they are in. Descriptors and portraits are never sent to the screen.
+- **Add:** a name, a one-line introduction, an event and a guided face scan create a profile with no device. The operator must tick that the person is present and agreed. A face that already matches someone else is refused.
+- **Edit:** profiles added here can be renamed, rescanned, moved in and out of events, or removed. Anyone's scan can be deleted. A person who registered on their own device cannot be renamed or rescanned from here.
+- **Recognition only:** people added here are recognized by LIVE Camera in their event (name, card and talking points). They hold no recording permission, so no countdown, pairing or conversation can start with them.
 
 ## Conversation summaries in the preview
 

@@ -51,7 +51,7 @@ export async function currentEventGrants(ctx: QueryCtx, c: Doc<"conversations">)
   return rows.every((row, i) => !!row && enabled(row) &&
     row.eventPermission!.revision === (i === 0 ? c.eventGrantA : c.eventGrantB));
 }
-function validateProfile(input: { name: string; role: string; photoUrl: string }) {
+export function validateProfile(input: { name: string; role: string; photoUrl: string }) {
   if (!input.name.trim() || input.name.length > 80 || input.role.length > 120) {
     fail("Use a name up to 80 characters and role up to 120 characters.");
   }
@@ -73,8 +73,11 @@ function profile(p: Doc<"profiles">, glanceEnabled?: boolean): Profile {
   return {
     id: p._id, name: p.name, role: p.role, photoUrl: p.photoUrl,
     ...(glanceEnabled !== undefined ? { glanceEnabled } : {}),
+    ...(p.managedBy ? { managed: true } : {}),
   };
 }
+/** Members LIVE Camera may recognize: those with Glance on, and people added from the Dev tab. */
+const recognizable = (membership: Doc<"memberships">) => enabled(membership) || membership.recognition === "dev";
 function event(e: Doc<"events">): Event {
   return { id: e._id, title: e.title, location: e.location, inviteCode: e.inviteCode, hostId: e.hostId };
 }
@@ -344,11 +347,11 @@ async function insertConversation(
   await ctx.scheduler.runAfter(120_000, anyApi.jobs.expireConsent, { conversationId });
   return conversationId;
 }
-async function faceTemplate(ctx: QueryCtx, profileId: Id<"profiles">) {
+export async function faceTemplate(ctx: QueryCtx, profileId: Id<"profiles">) {
   const row = await ctx.db.query("faceTemplates").withIndex("by_profile", (q) => q.eq("profileId", profileId)).unique();
   return row && row.model === FACE_MODEL && row.policyVersion === FACE_SCAN_POLICY_VERSION ? row : null;
 }
-async function clearSightings(ctx: MutationCtx, profileId: Id<"profiles">) {
+export async function clearSightings(ctx: MutationCtx, profileId: Id<"profiles">) {
   const rows = [
     ...await ctx.db.query("sightings").withIndex("by_observer", (q) => q.eq("observerId", profileId)).take(100),
     ...await ctx.db.query("sightings").withIndex("by_seen", (q) => q.eq("seenId", profileId)).take(100),
@@ -393,7 +396,7 @@ export const faceDirectory = query({
     const scanned = (await faceTemplate(ctx, me._id)) !== null;
     if (!enabled(own)) return { model: FACE_MODEL, enabled: false, scanned, templates: [] };
     const members = await ctx.db.query("memberships").withIndex("by_event", (q) => q.eq("eventId", args.eventId)).take(24);
-    const templates = await Promise.all(members.filter(enabled).map(async (m) => {
+    const templates = await Promise.all(members.filter(recognizable).map(async (m) => {
       const row = await faceTemplate(ctx, m.profileId);
       return row ? { profileId: m.profileId as string, descriptors: row.descriptors } : null;
     }));
