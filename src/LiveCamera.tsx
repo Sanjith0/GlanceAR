@@ -16,7 +16,7 @@ import { RecognitionScope } from './recognitionScope';
 import { glassesShellAvailable, setCameraDevice, useCameraDevice } from './capture/glassesBridge';
 import { CameraPicker } from './CameraPicker';
 import { PersonCardView } from './PersonCards';
-import { PeopleCardTracker, type PersonCard } from './peopleCards';
+import { GLASSES_THUMBNAIL, glassesViewSize, PeopleCardTracker, type PersonCard } from './peopleCards';
 import { TapCounter } from './secretTaps';
 import { createDevClient } from './data/devClient';
 
@@ -360,7 +360,7 @@ export function LiveCameraScreen() {
   // A 4:3 landscape window, as large as the column allows while the countdown card stays on screen.
   const cameraWidth = Math.max(240, Math.min(Math.min(width, 520) - 48, (height - 410) * 4 / 3));
   const cameraSize = { width: cameraWidth, height: cameraWidth * 3 / 4 };
-  const videoSize = glassesMode && videoMinimized ? { width: 120, height: 90 } : cameraSize;
+  const videoSize = !glassesMode ? cameraSize : videoMinimized ? GLASSES_THUMBNAIL : glassesViewSize(cameraWidth, height);
   return <Page back title="LIVE Camera">
     <DemoBanner /><GlobalStatus />
     {!event ? !app.loading && <Empty icon="calendar" title="Event unavailable" text="Go back to your events, or join with an invitation code." />

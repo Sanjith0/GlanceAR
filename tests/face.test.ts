@@ -67,24 +67,6 @@ describe('overlay projection', () => {
     expect(mirrored.x).toBeCloseTo(400 - (offset + 260 * scale));
   });
 
-  it('maps a whole tall glasses frame shown with bars at the sides', () => {
-    // 504x896 glasses frame in a 334x250 window: scaled by height, centred, nothing cropped.
-    const video = { width: 504, height: 896 }, view = { width: 334, height: 250 };
-    const scale = 250 / 896, bar = (334 - 504 * scale) / 2;
-    const shown = projectBox(box, video, view, false, 'contain');
-    expect(shown.x).toBeCloseTo(bar + 100 * scale);
-    expect(shown.y).toBeCloseTo(80 * scale);
-    expect(shown.width).toBeCloseTo(160 * scale);
-    expect(shown.height).toBeCloseTo(box.height * scale);
-    // The frame's own corners land inside the window, which cover would crop away.
-    const corner = projectBox({ x: 0, y: 0, width: 504, height: 896 }, video, view, false, 'contain');
-    expect(corner.x).toBeCloseTo(bar);
-    expect(corner.y).toBeCloseTo(0);
-    expect(corner.x + corner.width).toBeLessThanOrEqual(view.width);
-    expect(corner.height).toBeCloseTo(view.height);
-    const filled = projectBox({ x: 0, y: 0, width: 504, height: 896 }, video, view, false);
-    expect(filled.height).toBeGreaterThan(view.height * 2); // the old fit showed under half the frame
-  });
 });
 
 describe('talking points', () => {

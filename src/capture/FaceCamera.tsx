@@ -198,19 +198,16 @@ export default function FaceCamera({ active, scopeId = 'live:camera', overlays, 
     };
   }, [active, visible, supported, facing, scopeId, device, far, fast, identity]);
 
-  // The glasses send a tall frame. Filling a wide window with it crops most of the scene
-  // and looks zoomed in, so the whole frame is shown instead, as on the conversation screen.
-  const fit = device === 'glasses' ? 'contain' : 'cover';
   const shown = !active || !visible ? 'Camera off'
     : !supported ? 'This browser can’t open the camera here. Use a current browser over HTTPS or localhost.' : status;
   const live = shown === 'Live';
   return <View style={[styles.frame, style]} onLayout={e => setView({ width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height })}>
     <video ref={video} muted playsInline autoPlay aria-label="LIVE Camera view"
-      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: fit,
+      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover',
         transform: mirrored ? 'scaleX(-1)' : undefined, opacity: active && visible ? 1 : 0 }} />
     {live && guide && source.width > 0 && <FaceScanGuide guide={guide} source={source} view={view} mirrored={mirrored} />}
     {live && source.width > 0 && overlays.map(overlay => {
-      const box = projectBox(overlay.box, source, view, mirrored, fit);
+      const box = projectBox(overlay.box, source, view, mirrored);
       const tone = tones[overlay.tone];
       const labelWidth = Math.min(Math.max(box.width, 190), view.width - 16);
       const labelLeft = Math.min(Math.max(box.x + box.width / 2 - labelWidth / 2, 8), view.width - labelWidth - 8);

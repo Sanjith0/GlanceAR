@@ -81,6 +81,19 @@ export class PeopleCardTracker {
   reset(): void { this.entries.clear(); }
 }
 
+/**
+ * The glasses video window: tall (3 wide by 4 high) and filled edge to edge. The glasses
+ * send a 9:16 frame, so this shape shows three quarters of it with no bars, where a wide
+ * 4:3 window showed under half. It is as wide as the column allows, but never taller
+ * than half the screen, so the cards below stay within reach.
+ */
+export function glassesViewSize(columnWidth: number, screenHeight: number): { width: number; height: number } {
+  const height = Math.max(160, Math.min(columnWidth * 4 / 3, screenHeight * 0.5));
+  return { width: Math.round(height * 3 / 4), height: Math.round(height) };
+}
+/** The same window, minimized. */
+export const GLASSES_THUMBNAIL = { width: 90, height: 120 } as const;
+
 /** Whole seconds left before an out-of-view card goes. */
 export const secondsLeft = (remaining: number, lingerMs = CARD_LINGER_MS): number =>
   Math.max(0, Math.ceil(Math.max(0, Math.min(1, remaining)) * lingerMs / 1000));

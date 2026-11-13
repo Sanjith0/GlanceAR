@@ -153,3 +153,28 @@ describe('card countdown label', () => {
     expect(secondsLeft(2)).toBe(10);
   });
 });
+
+describe('glasses video window', () => {
+  it('is tall, 3 wide by 4 high, and as wide as the column when the screen allows', async () => {
+    const { glassesViewSize } = await import('../src/peopleCards');
+    expect(glassesViewSize(300, 1200)).toEqual({ width: 300, height: 400 });
+  });
+
+  it('never takes more than half the screen, keeping its shape', async () => {
+    const { glassesViewSize } = await import('../src/peopleCards');
+    const size = glassesViewSize(342, 844); // an iPhone 14 column
+    expect(size.height).toBe(422);
+    expect(size.width / size.height).toBeCloseTo(3 / 4, 2);
+    expect(size.width).toBeLessThanOrEqual(342);
+  });
+
+  it('shows three quarters of the tall glasses frame, against under half in a wide window', async () => {
+    const { glassesViewSize } = await import('../src/peopleCards');
+    const shown = (view: { width: number; height: number }) => {
+      const scale = Math.max(view.width / 504, view.height / 896);
+      return (Math.min(504, view.width / scale) * Math.min(896, view.height / scale)) / (504 * 896);
+    };
+    expect(shown(glassesViewSize(342, 844))).toBeCloseTo(0.75, 2);
+    expect(shown({ width: 342, height: 256 })).toBeLessThan(0.45);
+  });
+});
