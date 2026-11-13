@@ -56,7 +56,7 @@ export function GlobalStatus() {
     </View> : null}
     {app.loading && !app.snapshot ? <ActivityIndicator color={colors.blue} /> : null}
     {app.needsEnrollment && <View style={s.soft}><Text style={s.heading}>Make your introduction.</Text>
-      <Text style={s.muted}>Add a portrait and your name before you join an event.</Text>
+      <Text style={s.muted}>Add your name before you join an event. A portrait is optional.</Text>
       <Button onPress={() => router.push('/enroll')} icon="user-plus">Create your profile</Button></View>}
   </>;
 }
@@ -354,7 +354,7 @@ export function EnrollmentScreen() {
     if (value.length > 350000) throw new Error('That portrait is too large. Try a simpler background.');
     setPhoto(value);
   });
-  return <Page back title="Your profile"><Text style={s.title}>A face to remember.</Text><Text style={s.muted}>Let the people you meet put a face to your name. Your portrait stays separate from the recording.</Text>
+  return <Page back title="Your profile"><Text style={s.title}>A face to remember.</Text><Text style={s.muted}>Your name is all you need. A portrait is optional, and if you skip it people see your initial. It stays separate from the recording.</Text>
     <GlobalStatus />
     <View style={[s.card, { alignItems: 'center', paddingVertical: 25 }]}>
       {photo ? <Portrait person={{ id: 'preview', name: name || 'Your', role, photoUrl: photo }} size={104} /> :
