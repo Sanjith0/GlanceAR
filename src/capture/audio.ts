@@ -1,4 +1,4 @@
-import { BrowserRecorder, browserAudioSupported } from './browserAudio';
+import { BrowserRecorder, browserAudioSupported, openMicrophone } from './browserAudio';
 
 /**
  * Browser implementation of the native audio-capture contract used by
@@ -48,7 +48,7 @@ export function isAudioCaptureAvailable(): boolean { return browserAudioSupporte
 export async function requestAudioPermission(): Promise<boolean> {
   if (!browserAudioSupported()) return false;
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    const stream = await openMicrophone({});
     stream.getTracks().forEach(track => track.stop());
     return true;
   } catch {

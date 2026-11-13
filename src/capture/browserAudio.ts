@@ -16,6 +16,37 @@ export function browserAudioSupported(): boolean {
     && typeof AudioContext !== 'undefined';
 }
 
+/** The device's own microphone, by its label ("iPhone Microphone"), if the browser lists one. */
+export function phoneMicrophone(devices: readonly Pick<MediaDeviceInfo, 'kind' | 'label' | 'deviceId'>[]): string | null {
+  const own = devices.find(device => device.kind === 'audioinput' && device.deviceId && /\b(iphone|ipad)\b/i.test(device.label));
+  return own?.deviceId ?? null;
+}
+
+/**
+ * Opens the microphone, preferring the phone's own over a headset. Smart glasses are a
+ * Bluetooth headset too: left to itself iOS records through them, which captures the
+ * room poorly and switches the glasses to call audio while they may be streaming video.
+ * Falls back to the browser's default microphone whenever the phone's cannot be chosen.
+ */
+export async function openMicrophone(audio: MediaTrackConstraints): Promise<MediaStream> {
+  const media = navigator.mediaDevices;
+  const list = async () => { try { return await media.enumerateDevices(); } catch { return []; } };
+  const exact = (deviceId: string) => media.getUserMedia({ video: false, audio: { ...audio, deviceId: { exact: deviceId } } });
+  // Labels are visible once the microphone has been allowed on this page.
+  const known = phoneMicrophone(await list());
+  if (known) { try { return await exact(known); } catch { /* use the default below */ } }
+  const stream = await media.getUserMedia({ video: false, audio });
+  if (known) return stream;
+  // First use: the labels only appear now, so look again and switch if a headset was picked.
+  const wanted = phoneMicrophone(await list());
+  if (!wanted || wanted === stream.getAudioTracks()[0]?.getSettings().deviceId) return stream;
+  try {
+    const own = await exact(wanted);
+    stream.getTracks().forEach(track => track.stop());
+    return own;
+  } catch { return stream; }
+}
+
 type Session = {
   id: string; stream: MediaStream; context: AudioContext; chunks: Float32Array[]; samples: number;
   teardown: () => void;
@@ -34,9 +65,7 @@ export class BrowserRecorder {
     this.starting = id;
     let stream: MediaStream | null = null, context: AudioContext | null = null;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: false, audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      });
+      stream = await openMicrophone({ channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true });
       try { context = new AudioContext({ sampleRate: WAV_SAMPLE_RATE }); } catch { context = new AudioContext(); }
       // Created after the countdown, not inside a tap, so autoplay rules may start it suspended.
       if (context.state === 'suspended') await context.resume().catch(() => {});

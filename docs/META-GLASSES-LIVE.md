@@ -9,7 +9,7 @@
 | Face registration (scanning yourself and others) | iPhone camera, always |
 | Who's here / LIVE Camera (recognition, talking points, countdown) | Your pick: iPhone camera or Ray-Ban Meta |
 | Conversation screen (live view and finish gesture) | Your pick: iPhone camera or Ray-Ban Meta |
-| Microphone (conversation recording) | iPhone microphone |
+| Microphone (conversation recording) | iPhone microphone, requested by name so iOS does not record through the glasses |
 
 The picker appears only inside this app, and the choice is shared by both screens and remembered on the iPhone. With the glasses, the wearer is never in frame, so Who's here counts the wearer as present and holds on exactly one other registered attendee.
 
@@ -19,8 +19,8 @@ The picker appears only inside this app, and the choice is shared by both screen
 
 1. `Web/glassesCameraShim.js` is injected before the page loads. It wraps `navigator.mediaDevices.getUserMedia`. A request tagged `video: { glanceSource: 'glasses' }` returns the glasses feed. Every other request goes to the real iPhone camera or microphone.
 2. With **Ray-Ban Meta** selected, Who's here (`src/capture/FaceCamera.tsx`) and the conversation screen (`src/capture/GestureCapture.tsx`) make the tagged request through `src/capture/glassesBridge.ts`. Native code (`Sources/GlassesCamera.swift`) then starts a Meta Wearables Device Access Toolkit (DAT) 1.0.1 camera session. The session uses raw video, medium resolution (504×896), 15 fps and no glasses audio. Frames are JPEG-encoded at quality 0.85. High resolution (720×1280) was tried on Meta Adventurer glasses and the stream ended with the SDK's "Critical error, the stream should end", so it is not used.
-3. Each frame is JPEG-encoded and drawn into a canvas. That canvas is exposed as a normal `MediaStream`, which the existing face and hand models read. The session stays open for 3 seconds after a screen releases it, so moving from Who's here to the conversation does not restart the glasses. If the page is busy, frames are dropped rather than queued. Nothing is saved or uploaded.
-4. The track reports `facingMode: "environment"`, so the video is not mirrored. If no frame arrives within 15 seconds, or frames stall for 4 seconds, the track ends. Glance then shows its normal Retry state, and you can switch back to the iPhone camera.
+3. Each frame is JPEG-encoded and drawn into a canvas. That canvas is exposed as a normal `MediaStream`, which the existing face and hand models read. The session stays open for 10 seconds after a screen releases it, so moving from Who's here to the conversation does not restart the glasses. If the page is busy, frames are dropped rather than queued. Nothing is saved or uploaded.
+4. The track reports `facingMode: "environment"`, so the video is not mirrored. If no frame arrives within 15 seconds, or frames stall for 4 seconds, the track ends. Two things are not treated as a stall: the glasses pausing the video themselves (the page keeps its camera open and waits up to two minutes for them to resume, as Meta's session contract asks), and the page itself being too busy to draw frames. Glance then shows its normal Retry state, and you can switch back to the iPhone camera.
 5. The web view loads over HTTPS, so the iPhone camera and microphone work as they do in Safari. The app grants camera and microphone access only to the Glance site, and iOS asks for permission once.
 
 In live mode, each phone has to see the other person's hand. If you wear the glasses and look at the other person, their hand is in your view.

@@ -1,3 +1,4 @@
+import AVFAudio
 import SwiftUI
 import WebKit
 
@@ -12,6 +13,7 @@ final class GlanceWebHost: NSObject, ObservableObject, WKScriptMessageHandler, W
   var bundleReady: Bool { webURL != nil }
   private let camera: GlassesCamera
   private var jsBusy = false
+  private var routeObserver: NSObjectProtocol?
 
   init(camera: GlassesCamera) {
     self.camera = camera
@@ -35,6 +37,22 @@ final class GlanceWebHost: NSObject, ObservableObject, WKScriptMessageHandler, W
     webView.uiDelegate = self
     content.add(WeakMessageHandler(self), name: "glanceGlasses")
     if let webURL { webView.load(URLRequest(url: webURL)) }
+    // The glasses are also a Bluetooth headset. When the page starts recording, iOS may
+    // move the microphone to them, which switches the glasses into call audio while they
+    // are streaming video. Glance records the room with the iPhone's own microphone.
+    routeObserver = NotificationCenter.default.addObserver(
+      forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
+    ) { _ in GlanceWebHost.preferBuiltInMicrophone() }
+  }
+
+  /// Best effort: asks iOS to record from the built-in microphone whenever a Bluetooth
+  /// hands-free input took over. Does nothing if this app's audio session is not the one
+  /// recording, or if the built-in microphone is unavailable.
+  nonisolated static func preferBuiltInMicrophone() {
+    let session = AVAudioSession.sharedInstance()
+    guard session.currentRoute.inputs.contains(where: { $0.portType == .bluetoothHFP }),
+          let builtIn = session.availableInputs?.first(where: { $0.portType == .builtInMic }) else { return }
+    try? session.setPreferredInput(builtIn)
   }
 
   /// iPhone camera/mic for the Glance site only (iOS still asks once per app).
@@ -52,7 +70,8 @@ final class GlanceWebHost: NSObject, ObservableObject, WKScriptMessageHandler, W
       Task {
         await camera.start(
           onFrame: { [weak self] base64 in self?.push(base64) },
-          onFailure: { [weak self] message in self?.reportFailure(message) })
+          onFailure: { [weak self] message in self?.reportFailure(message) },
+          onPause: { [weak self] paused in self?.reportPaused(paused) })
       }
     case "stop":
       camera.stop()
@@ -73,6 +92,11 @@ final class GlanceWebHost: NSObject, ObservableObject, WKScriptMessageHandler, W
   func reportFailure(_ message: String) {
     let quoted = (try? String(data: JSONEncoder().encode(message), encoding: .utf8)) ?? "\"Glasses camera stopped.\""
     webView.evaluateJavaScript("window.__glanceGlassesCamera && window.__glanceGlassesCamera.failed(\(quoted))")
+  }
+
+  /// The glasses paused or resumed the video. The page keeps its camera open and waits.
+  func reportPaused(_ paused: Bool) {
+    webView.evaluateJavaScript("window.__glanceGlassesCamera && window.__glanceGlassesCamera.paused && window.__glanceGlassesCamera.paused(\(paused))")
   }
 
   /// Backgrounding stops the glasses camera; the web app shows its normal retry state.

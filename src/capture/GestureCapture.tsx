@@ -6,6 +6,7 @@ import { startHandTracking } from './handEngine';
 import { drawHandOverlays } from './handOverlay';
 import { acquireLiveCameraStream } from './liveCameraStream';
 import { acquireGlassesStream, type CameraDevice } from './glassesBridge';
+import { PlaybackBlocked, startVideo } from './videoPlayback';
 
 export type GestureSignal = { hands: number; stable: boolean; source: 'phone' | 'glasses' };
 export type GestureCaptureProps = {
@@ -107,7 +108,9 @@ export default function GestureCapture({ active, armed = true, sessionId, source
         acquired.stream.getVideoTracks().forEach(track => track.addEventListener('ended', ended));
         unwatchTracks = () => acquired.stream.getVideoTracks().forEach(track => track.removeEventListener('ended', ended));
         element.srcObject = acquired.stream; setMirrored(acquired.mirrored);
-        await element.play();
+        // The camera is open. Starting the picture is a separate step the browser can refuse
+        // for a moment (this screen opens without a tap); keep trying instead of giving up.
+        if (!await startVideo(element, isCurrent)) return;
         if (!isCurrent()) return;
         setVideoReady(true);
         report('Loading on-device hand detection…');
@@ -160,7 +163,8 @@ export default function GestureCapture({ active, armed = true, sessionId, source
         setVideoReady(false); setCanRetry(true); clearOverlay();
         if (element) element.srcObject = null;
         const name = error instanceof Error ? error.name : '';
-        report(name === 'NotAllowedError' ? 'Camera permission is off. Allow camera access for this site, then retry here.'
+        report(error instanceof PlaybackBlocked ? 'The live view did not start by itself. Tap Retry camera to show it.'
+          : name === 'NotAllowedError' ? 'Camera permission is off. Allow camera access for this site, then retry here.'
           : name === 'NotFoundError' ? 'No camera was found on this device.'
             : `Camera unavailable: ${error instanceof Error ? error.message : 'unknown error'}`);
       }
@@ -180,7 +184,11 @@ export default function GestureCapture({ active, armed = true, sessionId, source
     <canvas ref={canvas} aria-hidden="true" style={{ ...mediaStyle, pointerEvents: 'none' }} />
     <View pointerEvents="none" style={styles.live}><Text style={styles.liveText}>{active && visible && videoReady ? 'LIVE CAMERA' : 'CAMERA OFF'}</Text></View>
     {canRetry && active && visible && <Pressable accessibilityRole="button" accessibilityLabel="Retry camera and hand detection"
-      onPress={() => setRetry(value => value + 1)} style={styles.retry}><Text style={styles.retryText}>Retry camera</Text></Pressable>}
+      onPress={() => {
+        // Inside the tap itself, so the browser accepts it as the person asking for playback.
+        void video.current?.play().catch(() => {});
+        setRetry(value => value + 1);
+      }} style={styles.retry}><Text style={styles.retryText}>Retry camera</Text></Pressable>}
     <View pointerEvents="none" style={styles.caption}>
       <Text accessibilityLiveRegion="polite" style={styles.captionText}>{status}</Text>
       <View accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: Math.round(progress * 100) }}

@@ -9,6 +9,7 @@ import { acquireLiveCameraStream, type LiveCameraLease } from './liveCameraStrea
 import { acquireGlassesStream, type CameraDevice } from './glassesBridge';
 import { startFreshFaceFrames } from './faceFrameFreshness';
 import { FaceScanGuide, type ScanGuide } from './FaceScanGuide';
+import { PlaybackBlocked, startVideo } from './videoPlayback';
 
 export type { ScanGuide };
 
@@ -141,7 +142,8 @@ export default function FaceCamera({ active, scopeId = 'live:camera', overlays, 
         lease.stream.getVideoTracks().forEach(track => track.addEventListener('ended', ended));
         unwatchTracks = () => acquired.stream.getVideoTracks().forEach(track => track.removeEventListener('ended', ended));
         element.srcObject = lease.stream;
-        await element.play();
+        // A refusal to start the picture is not a camera permission problem; keep trying.
+        if (!await startVideo(element, current)) return;
         if (!current()) return;
         if (!liveTrack() || !documentVisible()) { cameraStopped(); return; }
         setMirrored(lease.mirrored);
@@ -177,7 +179,8 @@ export default function FaceCamera({ active, scopeId = 'live:camera', overlays, 
         lease = null;
         if (element) element.srcObject = null;
         const name = error instanceof Error ? error.name : '';
-        setStatus(name === 'NotAllowedError' ? 'Camera permission is off. Allow camera access for this site and reopen LIVE Camera.'
+        setStatus(error instanceof PlaybackBlocked ? 'The live view did not start by itself. Go back and reopen LIVE Camera.'
+          : name === 'NotAllowedError' ? 'Camera permission is off. Allow camera access for this site and reopen LIVE Camera.'
           : name === 'NotFoundError' ? 'No camera was found on this device.'
             : `Camera unavailable: ${error instanceof Error ? error.message : 'unknown error'}`);
       }

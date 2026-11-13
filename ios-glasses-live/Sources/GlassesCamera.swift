@@ -19,6 +19,10 @@ final class GlassesCamera: ObservableObject {
   private var epoch = UUID()
   private let encoder = FrameEncoder()
   private var onFailure: ((String) -> Void)?
+  private var onPause: ((Bool) -> Void)?
+  /// The glasses paused the session or stream. Meta's contract: hold, keep the
+  /// connection and wait; the device resumes by itself or stops.
+  private var paused = false
 
   init() {
     do {
@@ -77,11 +81,14 @@ final class GlassesCamera: ObservableObject {
   }
 
   /// Starts the glasses camera. `onFrame` receives base64 JPEG on the main actor.
-  func start(onFrame: @escaping (String) -> Void, onFailure: @escaping (String) -> Void) async {
+  /// `onPause` reports the glasses pausing (true) and resuming (false) the video.
+  func start(onFrame: @escaping (String) -> Void, onFailure: @escaping (String) -> Void,
+             onPause: @escaping (Bool) -> Void = { _ in }) async {
     stop()
     let current = UUID()
     epoch = current
     self.onFailure = onFailure
+    self.onPause = onPause
     func failed(_ message: String) { fail(message, for: current) }
     guard configured, Wearables.shared.registrationState == .registered else {
       return failed("Connect Glance to Meta AI in the Glasses panel first.")
@@ -122,7 +129,12 @@ final class GlassesCamera: ObservableObject {
         Task { @MainActor [weak self] in self?.fail("Glasses session error: \(error.localizedDescription)", for: current) }
       }.store(in: tokens)
       session.statePublisher.listen { state in
-        Task { @MainActor [weak self] in if state == .stopped { self?.fail("Glasses disconnected.", for: current) } }
+        Task { @MainActor [weak self] in
+          guard let self, self.epoch == current else { return }
+          if state == .stopped { self.fail("Glasses disconnected.", for: current) }
+          else if state == .paused { self.setPaused(true) }
+          else if state == .started { self.setPaused(false) }
+        }
       }.store(in: tokens)
 
       // DAT 1.0.1: synchronous start(), then wait for .started.
@@ -151,6 +163,8 @@ final class GlassesCamera: ObservableObject {
           Task { @MainActor [weak self] in
             guard let self, self.epoch == current else { return }
             if !self.streaming { self.streaming = true; self.status = "Live: Meta glasses camera" }
+            // A frame is proof the video is flowing again, whatever the state callbacks said.
+            if self.paused { self.setPaused(false) }
             onFrame(base64)
           }
         }
@@ -160,8 +174,12 @@ final class GlassesCamera: ObservableObject {
       }.store(in: tokens)
       camera.stream.statePublisher.listen { state in
         Task { @MainActor [weak self] in
-          guard let self, self.streaming, state == .paused || state == .stopped else { return }
-          self.fail("Glasses video paused or stopped.", for: current)
+          guard let self, self.epoch == current, self.streaming else { return }
+          // A pause is not a failure: the glasses resume the video themselves (for example
+          // after an audio route change). Only a stop ends the camera.
+          if state == .stopped { self.fail("Glasses video stopped.", for: current) }
+          else if state == .paused { self.setPaused(true) }
+          else if state == .streaming { self.setPaused(false) }
         }
       }.store(in: tokens)
       status = "Starting glasses video…"
@@ -201,6 +219,13 @@ final class GlassesCamera: ObservableObject {
     }.joined(separator: " ")
   }
 
+  private func setPaused(_ value: Bool) {
+    guard paused != value else { return }
+    paused = value
+    status = value ? "Glasses video paused. Waiting for the glasses to resume…" : "Live: Meta glasses camera"
+    onPause?(value)
+  }
+
   private func fail(_ message: String, for current: UUID) {
     guard epoch == current else { return }
     let report = onFailure
@@ -212,6 +237,8 @@ final class GlassesCamera: ObservableObject {
   func stop() {
     epoch = UUID()
     onFailure = nil
+    onPause = nil
+    paused = false
     camera?.stream.stop()
     camera?.stop()
     let oldSession = session, oldTokens = tokens

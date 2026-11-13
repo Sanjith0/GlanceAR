@@ -21,7 +21,12 @@
   var STALL_TIMEOUT_MS = 4000;
   // Keep the glasses session open briefly after the last track stops so the
   // LIVE Camera -> conversation handoff does not restart the DAT session.
-  var HANDOFF_GRACE_MS = 3000;
+  var HANDOFF_GRACE_MS = 10000;
+  // The glasses may pause the video themselves and resume it; that is not a failure.
+  // A pause this long is treated as one, so a stuck session does not hang forever.
+  var PAUSE_LIMIT_MS = 120000;
+  var pausedSince = 0;
+  var lastTick = 0;
   var graceTimer = null;
   var LABEL = 'Meta glasses';
 
@@ -69,7 +74,7 @@
 
   function fail(message) {
     var wasActive = state !== 'idle';
-    state = 'idle'; pending = null;
+    state = 'idle'; pending = null; pausedSince = 0;
     clearTimers();
     settle(error(message));
     endTracks();
@@ -81,8 +86,20 @@
     state = 'live';
     if (firstFrameTimer) clearTimeout(firstFrameTimer);
     firstFrameTimer = null;
+    lastTick = performance.now();
     stallTimer = setInterval(function () {
-      if (state === 'live' && performance.now() - lastFrameAt > STALL_TIMEOUT_MS) {
+      var now = performance.now();
+      // This check runs every second. If it ran late, the page itself was busy and
+      // could not draw frames: start the window again instead of blaming the glasses.
+      var late = now - lastTick > 2500;
+      lastTick = now;
+      if (state !== 'live') return;
+      if (late) { lastFrameAt = now; return; }
+      if (pausedSince) {
+        if (now - pausedSince > PAUSE_LIMIT_MS) fail('The Meta glasses stayed paused. Check the glasses and retry.');
+        return;
+      }
+      if (now - lastFrameAt > STALL_TIMEOUT_MS) {
         fail('The Meta glasses stopped sending video. Check the glasses connection and retry.');
       }
     }, 1000);
@@ -101,6 +118,7 @@
         }
         ctx.drawImage(img, 0, 0);
         lastFrameAt = performance.now();
+        pausedSince = 0;
         goLive();
       }
       pump();
@@ -195,5 +213,11 @@
       if (!decoding) pump();
     },
     failed: function (message) { fail(String(message || 'The Meta glasses camera stopped.')); },
+    // The glasses paused (true) or resumed (false) the video. Tracks stay open meanwhile.
+    paused: function (value) {
+      if (state === 'idle') return;
+      pausedSince = value ? performance.now() : 0;
+      if (!value) lastFrameAt = performance.now();
+    },
   };
 })();
