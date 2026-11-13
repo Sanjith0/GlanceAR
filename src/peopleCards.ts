@@ -9,9 +9,9 @@ export const CARD_DWELL_MS = 1_000;
 /** A card stays this long after the person was last seen, then it is removed. */
 export const CARD_LINGER_MS = 10_000;
 /** Seen this recently counts as "looking at them right now". */
-export const CARD_IN_VIEW_MS = 1_500;
+export const CARD_IN_VIEW_MS = 2_000;
 /** Sightings closer together than this count as one continuous look. */
-const DWELL_GAP_MS = 1_000;
+const DWELL_GAP_MS = 1_500;
 
 interface Entry { dwell: number; lastSeen: number; shownAt: number | null }
 

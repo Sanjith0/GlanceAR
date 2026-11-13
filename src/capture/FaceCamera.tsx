@@ -3,12 +3,16 @@ import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } fro
 import { Icon } from '../components';
 import { colors, fonts } from '../theme';
 import { projectBox, type FaceBox } from '../face';
-import { cropFace, detectFaces, faceEngineSupported, loadFaceEngine, type DetectedFace } from './faceEngine';
+import { cropFace, detectFaces, farDescriptors, faceEngineSupported, loadFaceEngine, type DetectedFace } from './faceEngine';
+import { FACE_FAR_BLURS, FACE_FAR_WIDTHS } from '../domain';
 import { acquireLiveCameraStream, type LiveCameraLease } from './liveCameraStream';
 import { acquireGlassesStream, type CameraDevice } from './glassesBridge';
 import { startFreshFaceFrames } from './faceFrameFreshness';
 
-export type FaceFrame = { faces: DetectedFace[]; width: number; height: number; sampledAt: number; crop: (box: FaceBox) => string };
+export type FaceFrame = { faces: DetectedFace[]; width: number; height: number; sampledAt: number; crop: (box: FaceBox) => string;
+  /** This face shrunk to look distant, as descriptors, for saving with a scan. Draws immediately. */
+  farSamples: (box: FaceBox) => Promise<number[][]>;
+};
 export type FaceOverlay = {
   key: string; box: FaceBox; title: string; detail?: string; points?: string[];
   tone: 'match' | 'self' | 'unknown' | 'scan';
@@ -21,6 +25,8 @@ export type FaceCameraProps = {
   onCameraReset?: () => void;
   /** 'glasses' only inside the Glance Glasses Live iPhone shell. */
   device?: CameraDevice;
+  /** Also find and read small, distant faces (costs a little more per frame). For recognition, not registration. */
+  far?: boolean;
   style?: StyleProp<ViewStyle>;
 };
 
@@ -35,7 +41,7 @@ const tones = {
 /** Fetch and warm the face models ahead of time (no camera access). */
 export { preloadFaceEngine as preloadFaceModels } from './faceEngine';
 
-export default function FaceCamera({ active, scopeId = 'live:camera', overlays, onFrame, onCameraReset, device = 'phone', style }: FaceCameraProps) {
+export default function FaceCamera({ active, scopeId = 'live:camera', overlays, onFrame, onCameraReset, device = 'phone', far = false, style }: FaceCameraProps) {
   const video = useRef<HTMLVideoElement | null>(null);
   const [status, setStatus] = useState('Starting camera…');
   const [facing, setFacing] = useState<'environment' | 'user'>('environment');
@@ -46,7 +52,7 @@ export default function FaceCamera({ active, scopeId = 'live:camera', overlays, 
   const [visible, setVisible] = useState(() => typeof document === 'undefined' || document.visibilityState === 'visible');
   const [visibilityEpoch, setVisibilityEpoch] = useState(0);
   const supported = faceEngineSupported();
-  const identity = JSON.stringify([active, scopeId, facing, visible, visibilityEpoch, supported, device]);
+  const identity = JSON.stringify([active, scopeId, facing, visible, visibilityEpoch, supported, device, far]);
   const latest = useRef({ identity, onFrame, onCameraReset, blocked: !active || !visible });
   const committedIdentity = useRef<string | null>(null);
   const [renderedIdentity, setRenderedIdentity] = useState(identity);
@@ -132,13 +138,14 @@ export default function FaceCamera({ active, scopeId = 'live:camera', overlays, 
         if (!liveTrack() || !documentVisible()) { cameraStopped(); return; }
         setStatus('Live');
         stopFrames = startFreshFaceFrames({
-          video: element, detectFaces, isCurrent: current, isLive: liveTrack, isVisible: documentVisible,
+          video: element, detectFaces: v => detectFaces(v, { far }), isCurrent: current, isLive: liveTrack, isVisible: documentVisible,
           onReset: reset, onStopped: cameraStopped,
           onFrame: frame => {
             if (!current() || !liveTrack() || !documentVisible()) return;
             setSource(old => old.width === frame.width && old.height === frame.height
               ? old : { width: frame.width, height: frame.height });
-            latest.current.onFrame({ ...frame, crop: box => cropFace(element, box) });
+            latest.current.onFrame({ ...frame, crop: box => cropFace(element, box),
+              farSamples: box => farDescriptors(element, box, FACE_FAR_WIDTHS, FACE_FAR_BLURS) });
           },
           onError: error => {
             if (!current() || !documentVisible()) return;
@@ -168,7 +175,7 @@ export default function FaceCamera({ active, scopeId = 'live:camera', overlays, 
       lease?.release();
       if (element) element.srcObject = null;
     };
-  }, [active, visible, supported, facing, scopeId, device, identity]);
+  }, [active, visible, supported, facing, scopeId, device, far, identity]);
 
   const shown = !active || !visible ? 'Camera off'
     : !supported ? 'This browser can’t open the camera here. Use a current browser over HTTPS or localhost.' : status;

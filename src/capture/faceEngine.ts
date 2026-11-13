@@ -1,14 +1,16 @@
-import { compactDescriptor, MIN_FACE_WIDTH, type FaceBox } from '../face';
+import type { FaceBox } from '../face';
+import { detectFacesWith, farDescriptorsWith, type DetectedFace, type FaceApi } from './faceDetect';
 
 /**
  * Browser-only, on-device face detection and 128-number descriptors (face-api.js,
  * MIT). Frames never leave this tab; only descriptors of opted-in scans are saved.
  * Loaded lazily so the rest of the app never downloads TensorFlow or the models.
  */
-export type DetectedFace = { box: FaceBox; score: number; descriptor?: number[] };
-type FaceApi = typeof import('@vladmandic/face-api');
+export type { DetectedFace };
 
 let engine: Promise<FaceApi> | null = null;
+/** Set once the models are ready, so a scan can start drawing its far samples synchronously. */
+let ready: FaceApi | null = null;
 
 /** Models ship beside index.html (see scripts/copy-face-models.mjs), so nested hosting paths work. */
 function modelBase(): string {
@@ -37,6 +39,7 @@ export function loadFaceEngine(): Promise<FaceApi> {
     // The first WebGL run of each net compiles its shaders, which can take seconds on
     // phones. Do it once on a blank canvas so the first real frame is fast.
     if (webgl) await warmUp(faceapi).catch(() => {});
+    ready = faceapi;
     return faceapi;
   })();
   // A failed download may be retried by reopening the camera.
@@ -58,20 +61,18 @@ export function preloadFaceEngine(): void {
   void loadFaceEngine().catch(() => {});
 }
 
-export async function detectFaces(video: HTMLVideoElement): Promise<DetectedFace[]> {
-  const faceapi = await loadFaceEngine();
-  const results = await faceapi
-    .detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 }))
-    .withFaceLandmarks()
-    .withFaceDescriptors();
-  return results.map(result => {
-    const { x, y, width, height } = result.detection.box;
-    return {
-      box: { x, y, width, height }, score: result.detection.score,
-      // Too-small faces produce unreliable descriptors; they are shown but never matched.
-      ...(width >= MIN_FACE_WIDTH ? { descriptor: compactDescriptor(result.descriptor) } : {}),
-    };
-  });
+/** `far` reads small, distant faces too (tiled pass); registration keeps the cheaper single pass. */
+export async function detectFaces(video: HTMLVideoElement, options: { far?: boolean } = {}): Promise<DetectedFace[]> {
+  return detectFacesWith(await loadFaceEngine(), video, options);
+}
+
+/**
+ * This face as it would look from farther away, for saving with a scan. Starts
+ * drawing immediately (the camera may close right after); resolves to nothing if the
+ * models are not ready.
+ */
+export function farDescriptors(video: HTMLVideoElement, box: FaceBox, widths: number[], blurs: number[] = []): Promise<number[][]> {
+  return ready ? farDescriptorsWith(ready, video, box, widths, blurs) : Promise.resolve([]);
 }
 
 /** A loosely framed JPEG of one face, used only as a preview attendee's portrait. */

@@ -246,7 +246,16 @@ export const FACE_SCAN_POLICY_VERSION = "glance-face-v1";
 /** face-api.js ResNet-34 descriptor (dlib port). Templates from another model never match. */
 export const FACE_MODEL = "face-api-resnet128-v1";
 export const FACE_DESCRIPTOR_LENGTH = 128;
+/** Close-up frames taken while scanning. */
 export const FACE_SCAN_SAMPLES = 3;
+/** Extra descriptors of the same face shrunk to look distant, so people are recognized from farther away. */
+export const FACE_FAR_SAMPLES = 3;
+/** Most descriptors one saved scan may hold. */
+export const FACE_MAX_DESCRIPTORS = FACE_SCAN_SAMPLES + FACE_FAR_SAMPLES;
+/** Face widths (pixels) the far samples are shrunk to. */
+export const FACE_FAR_WIDTHS = [64, 48, 36];
+/** Blur (px) applied to each far sample: the farthest are softest, like a distant face from a moving camera. */
+export const FACE_FAR_BLURS = [0, 0.6, 1];
 /** Both phones must recognize each other within this window to pair. */
 export const SIGHTING_WINDOW_MS = 8_000;
 export const SIGHTING_REPORT_INTERVAL_MS = 1_000;

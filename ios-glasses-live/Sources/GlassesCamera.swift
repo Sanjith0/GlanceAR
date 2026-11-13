@@ -141,7 +141,7 @@ final class GlassesCamera: ObservableObject {
         return failed("These glasses need a firmware or Meta AI update for camera access.")
       }
       guard let camera = try session.addCamera(config:
-        StreamConfiguration(videoCodec: .raw, audioCodec: nil, resolution: .medium, frameRate: 15)
+        StreamConfiguration(videoCodec: .raw, audioCodec: nil, resolution: .high, frameRate: 15)
       ) else { return failed("These glasses did not offer a camera stream.") }
       self.camera = camera
 
@@ -238,7 +238,7 @@ private final class FrameEncoder: @unchecked Sendable {
     queue.async { [self] in
       defer { lock.lock(); busy = false; lock.unlock() }
       let image: UIImage? = frame.makeUIImage()
-      guard let data = image?.jpegData(compressionQuality: 0.65) else { return }
+      guard let data = image?.jpegData(compressionQuality: 0.85) else { return }
       completion(data.base64EncodedString())
     }
   }

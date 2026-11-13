@@ -1,4 +1,4 @@
-import { FACE_DESCRIPTOR_LENGTH, FACE_SCAN_SAMPLES, type FaceTemplate } from './domain';
+import { FACE_DESCRIPTOR_LENGTH, FACE_MAX_DESCRIPTORS, type FaceTemplate } from './domain';
 
 /** Pure face utilities shared by the browser camera and the Convex backend. No frames, only numbers. */
 export type FaceBox = { x: number; y: number; width: number; height: number };
@@ -12,10 +12,15 @@ export const MATCH_MARGIN = 0.06;
 export const SCAN_CONSISTENCY = 0.42;
 /** Faces narrower than this (source pixels) give unreliable descriptors. */
 export const MIN_FACE_WIDTH = 64;
+/** The far-sighted pass reads faces down to this width (source pixels). */
+export const MIN_FAR_FACE_WIDTH = 36;
+/** Below this width a descriptor is noisier, so a match must clear a wider margin. */
+export const SMALL_FACE_WIDTH = 64;
+export const SMALL_FACE_MARGIN = 0.1;
 export const MIN_SCAN_FACE_WIDTH = 110;
 
 export function validDescriptors(descriptors: unknown): descriptors is number[][] {
-  return Array.isArray(descriptors) && descriptors.length >= 1 && descriptors.length <= FACE_SCAN_SAMPLES
+  return Array.isArray(descriptors) && descriptors.length >= 1 && descriptors.length <= FACE_MAX_DESCRIPTORS
     && descriptors.every(d => Array.isArray(d) && d.length === FACE_DESCRIPTOR_LENGTH
       && d.every(x => typeof x === 'number' && Number.isFinite(x) && Math.abs(x) <= 1));
 }
@@ -32,14 +37,21 @@ export function faceDistance(a: ArrayLike<number>, b: ArrayLike<number>): number
 }
 
 /** Closest enrolled person, or null when nobody is close enough or two people are too alike. */
-export function matchDescriptor(descriptor: ArrayLike<number>, templates: FaceTemplate[]): FaceMatch | null {
+export function matchDescriptor(descriptor: ArrayLike<number>, templates: FaceTemplate[], faceWidth?: number): FaceMatch | null {
   const ranked = templates
     .map(t => ({ profileId: t.profileId, distance: Math.min(...t.descriptors.map(d => faceDistance(descriptor, d))) }))
     .sort((a, b) => a.distance - b.distance);
   const [best, second] = ranked;
   if (!best || best.distance >= MATCH_THRESHOLD) return null;
-  if (second && second.distance - best.distance < MATCH_MARGIN) return null;
+  const margin = faceWidth !== undefined && faceWidth < SMALL_FACE_WIDTH ? SMALL_FACE_MARGIN : MATCH_MARGIN;
+  if (second && second.distance - best.distance < margin) return null;
   return best;
+}
+
+/** Far samples are kept only if they still look like the close-up scan; anything else is a bad read. */
+export const FAR_SAMPLE_LIMIT = 0.6;
+export function keepFarSamples(near: number[][], far: number[][]): number[][] {
+  return far.filter(sample => near.some(d => faceDistance(sample, d) < FAR_SAMPLE_LIMIT));
 }
 
 /** True when every sample pair is plausibly the same face. */

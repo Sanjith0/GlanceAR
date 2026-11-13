@@ -260,7 +260,7 @@ export function LiveCameraScreen() {
     if (!mounted.current || !focused || !enabled || !pageVisible()
       || leaving.current || !scope.current.acceptsFrame(frame.sampledAt)) return;
     const now = Date.now();
-    const results = frame.faces.map(face => ({ face, match: face.descriptor ? matchDescriptor(face.descriptor, templates) : null }));
+    const results = frame.faces.map(face => ({ face, match: face.descriptor ? matchDescriptor(face.descriptor, templates, face.box.width) : null }));
     const stable = tracker.current.observe(results.flatMap(({ match }) =>
       match && match.profileId !== me?.id && people.has(match.profileId) ? [match.profileId] : []), now);
     if (wearingGlasses.current) {
@@ -416,7 +416,7 @@ export function LiveCameraScreen() {
         </View>}
         {/* Minimizing only shrinks the view; the camera keeps running so recognition continues. */}
         <View style={[videoSize, { alignSelf: glassesMode && videoMinimized ? 'flex-start' : 'center', borderRadius: 20, overflow: 'hidden' }]}>
-          <FaceCamera active={cameraActive} scopeId={`live:${id}:${app.mode}:${me?.id ?? 'unregistered'}`} device={cameraDevice}
+          <FaceCamera active={cameraActive} scopeId={`live:${id}:${app.mode}:${me?.id ?? 'unregistered'}`} device={cameraDevice} far
             overlays={glassesMode && videoMinimized ? [] : overlays} onFrame={onFrame} onCameraReset={resetCountdown} style={videoSize} />
           {flashing && !(glassesMode && videoMinimized) && <ConnectingFlash />}
         </View>

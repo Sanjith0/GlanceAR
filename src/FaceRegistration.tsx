@@ -6,7 +6,7 @@ import { colors, s } from './theme';
 import { useFaceDirectory, useGlance } from './state';
 import { DemoBanner, GlobalStatus, useOperation, useScreenFocused } from './screens';
 import FaceCamera, { preloadFaceModels, type FaceFrame, type FaceOverlay } from './capture/FaceCamera';
-import { consistentSamples, faceDistance, MATCH_THRESHOLD, scanProblem } from './face';
+import { consistentSamples, faceDistance, keepFarSamples, MATCH_THRESHOLD, scanProblem } from './face';
 import { DEMO_FACE_LIMIT, FACE_SCAN_SAMPLES } from './domain';
 
 type ScanTarget = { profileId?: string; name: string; role: string };
@@ -93,6 +93,8 @@ export function FaceRegistrationScreen() {
       return;
     }
     const { target, samples, portrait } = run;
+    // Start drawing the distant-looking samples now: the camera closes in a moment.
+    const farSamples = frame.farSamples(face.box).catch(() => [] as number[][]);
     // One face, one attendee: never save a scan that already matches someone else.
     const clash = templates.find(t => t.profileId !== target.profileId
       && t.descriptors.some(d => samples.some(sample => faceDistance(sample, d) < MATCH_THRESHOLD)));
@@ -103,7 +105,12 @@ export function FaceRegistrationScreen() {
     }
     void perform(async () => {
       const profileId = target.profileId ?? app.addDemoPerson(id, target.name, target.role, portrait!);
-      await app.saveFaceScan(profileId, samples);
+      const far = keepFarSamples(samples, await farSamples);
+      try { await app.saveFaceScan(profileId, [...samples, ...far]); } catch (error) {
+        // A backend that has not been redeployed only accepts the close-up samples.
+        if (!far.length) throw error;
+        await app.saveFaceScan(profileId, samples);
+      }
       setNotice({ text: `${firstName(target.name)} is registered${app.mode === 'live'
         ? ' and synced to everyone with Glance on in this event.' : '. Scans stay in this tab’s memory.'}` });
     });

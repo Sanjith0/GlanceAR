@@ -27,7 +27,7 @@ export interface DiscoverState {
 }
 
 /**
- * Memory only, like the web device token: no cookies or browser storage, so a
+ * Memory only, with no cookies or browser storage for this state, so a
  * reload returns to the Glance UI with no signals, picks or RSVPs.
  */
 const initial = (): DiscoverState => ({
