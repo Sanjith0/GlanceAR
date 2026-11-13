@@ -6,6 +6,7 @@ import { v } from "convex/values";
 import { internalAction } from "./server";
 import { validateWav } from "./validation";
 import { failureCode, metaBaseUrl, safeError, summarizeTranscript, transcribeDiarized } from "./meta";
+import { nameSpeakers, transcriptOnly } from "./speakers";
 
 export const process = internalAction({
   args: { conversationId: v.id("conversations"), generation: v.number() },
@@ -23,10 +24,18 @@ export const process = internalAction({
       validateWav(bytes, Math.max(0, job.endedAt - job.startedAt) + 2000);
       if (!await ctx.runQuery(anyApi.jobs.canProcess, args)) return;
       const base = metaBaseUrl(globalThis.process.env.META_API_BASE_URL);
-      const { turns, forSummary } = await transcribeDiarized(key, bytes, base);
+      const { transcript, turns, forSummary } = await transcribeDiarized(key, bytes, base);
       if (!await ctx.runQuery(anyApi.jobs.canProcess, args)) return;
-      const recap = await summarizeTranscript(key, forSummary, base);
-      await ctx.runMutation(anyApi.jobs.finish, { ...args, recap: { ...recap, transcript: turns } });
+      const said = nameSpeakers(turns, bytes, job.recorderId, job.partnerId);
+      let recap;
+      try {
+        recap = { ...await summarizeTranscript(key, forSummary, base), transcript: said };
+      } catch (error) {
+        // The words are known even though the summary is not: share those instead of nothing.
+        console.error(`Recap summary failed, sharing the transcript alone: ${failureCode(error)}`);
+        recap = transcriptOnly(said, transcript, job.endedAt - job.startedAt);
+      }
+      await ctx.runMutation(anyApi.jobs.finish, { ...args, recap });
     } catch (error) {
       // Never log provider bodies, API keys, transcripts, photos, or device credentials; the code is ours.
       console.error(`Recap processing failed: ${failureCode(error)}`);

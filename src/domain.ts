@@ -45,17 +45,20 @@ export interface Recap {
   summary: string;
   topics: string[];
   nextSteps: string[];
-  source: "ai" | "sample";
-  /** Anonymous diarized turns, shown behind a button. */
+  /** "transcript": no AI summary could be written, so only what was said is shared and `summary` is empty. */
+  source: "ai" | "sample" | "transcript";
+  /** Diarized turns: behind a button under a summary, shown outright when there is no summary. */
   transcript?: SpeakerTurn[];
 }
 
-/** "Speaker 1", "Speaker 2"… by first appearance; never a participant identity. */
 export interface SpeakerTurn {
+  /** "Speaker 1", "Speaker 2"… by first appearance. Empty when the recording was not split into turns. */
   speaker: string;
   startMs: number;
   endMs: number;
   text: string;
+  /** The participant this voice is estimated to be (the louder voice is the recorder's). Not verified. */
+  speakerId?: string;
 }
 
 export type ConversationStatus =

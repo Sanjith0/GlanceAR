@@ -1,13 +1,43 @@
 import type { Recap } from "../src/domain";
 
+const SUMMARY_LIMIT = 2000;
+const ITEM_LIMIT = 300;
+const LIST_LIMIT = 12;
+const clip = (text: string, limit: number) => text.length <= limit ? text : `${text.slice(0, limit - 1).trimEnd()}…`;
+
+/**
+ * Cleans a model's recap before validation, so a small flaw does not cost the whole recap:
+ * spaces around text, blank list items, a missing list, and text or lists past their limits.
+ * It never adds content. Anything of the wrong type or with other fields is left as it is,
+ * for validateRecap to reject.
+ */
+export function tidyRecap(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const data: Record<string, unknown> = { ...(value as Record<string, unknown>) };
+  if (typeof data.summary === "string") data.summary = clip(data.summary.trim(), SUMMARY_LIMIT);
+  for (const key of ["topics", "nextSteps"]) {
+    const list = data[key];
+    if (list === null) data[key] = [];
+    else if (Array.isArray(list) && list.every((item) => typeof item === "string")) {
+      data[key] = (list as string[]).map((item) => clip(item.trim(), ITEM_LIMIT)).filter(Boolean).slice(0, LIST_LIMIT);
+    }
+  }
+  return data;
+}
+
+/**
+ * Throws a code that names the flaw and nothing else (never the text), so a failure can be
+ * diagnosed from the logs: INVALID_RECAP_SHAPE, _FIELDS, _SUMMARY, _TOPICS or _NEXT_STEPS.
+ */
 export function validateRecap(value: unknown): Recap & { source: "ai" } {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("INVALID_RECAP");
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("INVALID_RECAP_SHAPE");
   const data = value as Record<string, unknown>;
   const list = (input: unknown): input is string[] =>
-    Array.isArray(input) && input.length <= 12 && input.every((s) => typeof s === "string" && s.trim().length > 0 && s.length <= 300);
-  if (Object.keys(data).sort().join(",") !== "nextSteps,summary,topics" ||
-    typeof data.summary !== "string" || !data.summary.trim() || data.summary.length > 2000 ||
-    !list(data.topics) || !list(data.nextSteps)) throw new Error("INVALID_RECAP");
+    Array.isArray(input) && input.length <= LIST_LIMIT && input.every((s) => typeof s === "string" && s.trim().length > 0 && s.length <= ITEM_LIMIT);
+  if (Object.keys(data).sort().join(",") !== "nextSteps,summary,topics") throw new Error("INVALID_RECAP_FIELDS");
+  if (typeof data.summary !== "string" || !data.summary.trim() || data.summary.length > SUMMARY_LIMIT) throw new Error("INVALID_RECAP_SUMMARY");
+  if (!list(data.topics)) throw new Error("INVALID_RECAP_TOPICS");
+  if (!list(data.nextSteps)) throw new Error("INVALID_RECAP_NEXT_STEPS");
   return { summary: data.summary, topics: data.topics, nextSteps: data.nextSteps, source: "ai" };
 }
 

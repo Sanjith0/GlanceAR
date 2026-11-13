@@ -6,6 +6,7 @@ import {
 import { Button, Icon, Notice, Portrait } from './components';
 import type { Conversation, Profile } from './domain';
 import { colors, fonts, s } from './theme';
+import { NAME_ESTIMATE_NOTE, transcriptLines } from './transcriptView';
 
 /** Speaker 1 blue, Speaker 2 green, alternating after that. */
 const speakerColors = [colors.green, colors.blue];
@@ -113,6 +114,9 @@ function ChatContent({
   </View>;
 
   const recap = conversation.recap;
+  // No AI summary could be written, so what was said is shown on its own.
+  const transcriptOnly = recap?.source === 'transcript';
+  const said = transcriptLines(recap?.transcript, conversation.participants);
   const recapPending = !recap && ['ended', 'processing'].includes(conversation.status);
 
   return <KeyboardAvoidingView testID="conversation-chat" style={styles.frame}
@@ -159,9 +163,16 @@ function ChatContent({
           <View style={styles.recapHeading}>
             <Icon name={recap ? 'file-text' : recapPending ? 'clock' : 'info'} color={colors.blue} size={18} />
             <Text style={styles.recapLabel}>{recap?.source === 'sample' && demo
-              ? 'SAMPLE RECAP · NOT TRANSCRIBED' : recap?.source === 'ai' ? 'SHARED AI RECAP' : 'SHARED RECAP'}</Text>
+              ? 'SAMPLE RECAP · NOT TRANSCRIBED' : recap?.source === 'ai' ? 'SHARED AI RECAP' : transcriptOnly ? 'WHAT WAS SAID' : 'SHARED RECAP'}</Text>
           </View>
-          {recap ? <>
+          {recap && transcriptOnly ? <>
+            <View style={styles.transcript} testID="chat-transcript">
+              {said.lines.map(line => <Text key={line.key} selectable style={s.body}>
+                {line.name ? <Text style={[styles.saidName, { color: speakerColors[line.tone] }]}>{`${line.name}: `}</Text> : null}{line.text}
+              </Text>)}
+            </View>
+            <Text style={s.small}>{`No AI summary could be written for this conversation, so this is the transcript. Both of you see the same one.${said.named ? ` ${NAME_ESTIMATE_NOTE}` : ''}`}</Text>
+          </> : recap ? <>
             <Text style={s.body}>{recap.summary}</Text>
             {recap.topics.length > 0 && <View style={styles.topics}>{recap.topics.map((topic, index) =>
               <View key={`${index}-${topic}`} style={styles.topic}><Text style={s.small}>{topic}</Text></View>
@@ -173,16 +184,16 @@ function ChatContent({
                 <Text style={[s.muted, styles.flexText]}>{step}</Text>
               </View>)}
             </View>}
-            {recap.transcript && recap.transcript.length > 0 && <>
+            {said.lines.length > 0 && <>
               <Button tone="ghost" icon={showTranscript ? 'chevron-up' : 'align-left'} testID="chat-transcript-toggle"
                 onPress={() => setShowTranscript(!showTranscript)}>{showTranscript ? 'Hide transcript' : 'Show transcript'}</Button>
               {showTranscript && <View style={styles.transcript} testID="chat-transcript">
-                {recap.transcript.map((turn, index) => <View key={`${index}-${turn.startMs}`} style={styles.turn}>
-                  <Text style={[styles.speaker, { color: speakerColors[(Number(turn.speaker.replace(/\D/g, '')) || 1) % 2] }]}>
-                    {`${turn.speaker} · ${timestamp(turn.startMs)}`}</Text>
-                  <Text style={s.muted}>{turn.text}</Text>
+                {said.lines.map(line => <View key={line.key} style={styles.turn}>
+                  <Text style={[styles.speaker, { color: speakerColors[line.tone] }]}>
+                    {`${line.name ? `${line.name} · ` : ''}${timestamp(line.startMs)}`}</Text>
+                  <Text style={s.muted}>{line.text}</Text>
                 </View>)}
-                <Text style={s.small}>Speaker numbers come from the recording’s voices, not from who you are.</Text>
+                <Text style={s.small}>{said.named ? NAME_ESTIMATE_NOTE : 'Speaker numbers come from the recording’s voices, not from who you are.'}</Text>
               </View>}
             </>}
             <Text style={s.small}>{demo && recap.source === 'sample'
@@ -276,6 +287,7 @@ const styles = StyleSheet.create({
   transcript: { gap: 12, paddingTop: 4 },
   turn: { gap: 2 },
   speaker: { fontFamily: fonts.semibold, fontSize: 12, lineHeight: 17, letterSpacing: 0.3 },
+  saidName: { fontFamily: fonts.semibold },
   emptyMessages: { color: colors.muted, fontFamily: fonts.body, fontSize: 13, lineHeight: 20, textAlign: 'center', paddingVertical: 12 },
   messageRow: { flexDirection: 'row', justifyContent: 'flex-start' },
   myMessageRow: { justifyContent: 'flex-end' },

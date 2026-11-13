@@ -1,5 +1,5 @@
 import type { Recap, SpeakerTurn } from "../src/domain";
-import { validateRecap } from "./validation";
+import { tidyRecap, validateRecap } from "./validation";
 import {
   DISCOVER_EVENTS, cleanInterests, validatePicks,
   type DiscoverPick, type Signals, type TasteRead,
@@ -80,7 +80,42 @@ export async function transcribeDiarized(key: string, wav: ArrayBuffer, base: st
   return { transcript, turns, forSummary: turns.length ? speakerTranscript(turns).slice(0, MAX_TRANSCRIPT) : transcript };
 }
 
+/**
+ * The recap in a chat reply. A reply can be usable without being exactly what was asked for:
+ * text in parts, JSON inside a code fence or after a line of preamble, blank list items.
+ * Those are accepted; a reply with no recap in it fails with a code that says which way.
+ */
+export function recapFromReply(reply: unknown): Recap & { source: "ai" } {
+  const choice = (reply as { choices?: { message?: { content?: unknown }; finish_reason?: unknown }[] } | null)?.choices?.[0];
+  const content = choice?.message?.content;
+  const text = (typeof content === "string" ? content
+    : Array.isArray(content) ? content.map((part) => typeof (part as { text?: unknown } | null)?.text === "string" ? (part as { text: string }).text : "").join("")
+    : "").trim();
+  // Out of tokens before the answer (a reasoning model can spend them all thinking) or part-way through it.
+  const cutShort = choice?.finish_reason === "length";
+  if (!text) throw new Error(cutShort ? "RECAP_CUT_SHORT" : "RECAP_NO_TEXT");
+  let parsed: unknown;
+  try { parsed = JSON.parse(text); } catch {
+    const start = text.indexOf("{"), end = text.lastIndexOf("}");
+    try { parsed = JSON.parse(text.slice(start, end + 1)); } catch { throw new Error(cutShort ? "RECAP_CUT_SHORT" : "RECAP_NOT_JSON"); }
+  }
+  const tidy = tidyRecap(parsed);
+  // A well-formed reply with nothing in it: the model found nothing to say about the transcript.
+  if (tidy && typeof tidy === "object" && (tidy as { summary?: unknown }).summary === "") throw new Error("EMPTY_RECAP");
+  return validateRecap(tidy);
+}
+
+/** Asks once more when the reply had no usable recap; a provider or network failure is not retried here. */
 export async function summarizeTranscript(key: string, transcript: string, base: string): Promise<Recap & { source: "ai" }> {
+  try {
+    return await requestRecap(key, transcript, base);
+  } catch (error) {
+    if (!/^(INVALID_RECAP|RECAP_|EMPTY_RECAP)/.test(failureCode(error))) throw error;
+    return await requestRecap(key, transcript, base);
+  }
+}
+
+async function requestRecap(key: string, transcript: string, base: string): Promise<Recap & { source: "ai" }> {
   const response = await request("SUMMARY", `${base}/v1/chat/completions`, {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
@@ -91,14 +126,13 @@ export async function summarizeTranscript(key: string, transcript: string, base:
         { role: "user", content: transcript },
       ],
       response_format: { type: "json_schema", json_schema: { name: "NetworkingRecap", strict: true, schema: recapSchema } },
-      max_completion_tokens: 1800,
+      max_completion_tokens: 3000,
     }),
     signal: AbortSignal.timeout(120_000),
   });
-  const json = await response.json();
-  const content = json.choices?.[0]?.message?.content;
-  if (typeof content !== "string") throw new Error("INVALID_RECAP");
-  return validateRecap(JSON.parse(content));
+  let reply: unknown;
+  try { reply = await response.json(); } catch { throw new Error("RECAP_NOT_JSON"); }
+  return recapFromReply(reply);
 }
 
 /** Fails with a body-free code: STEP_HTTP_<status> or STEP_NETWORK. */
@@ -129,7 +163,9 @@ export function safeError(error: unknown): string {
   if (code === "INVALID_WAV") return "Audio must be mono 16-bit PCM WAV at 16 or 24 kHz.";
   if (code === "AUDIO_TOO_LONG") return "Audio exceeded the consented recording duration.";
   if (code === "EMPTY_TRANSCRIPT") return "No intelligible speech was returned. No recap was generated.";
-  if (code === "INVALID_RECAP") return "The AI response did not pass validation. No recap was published.";
+  if (code === "EMPTY_RECAP") return "The AI found nothing to summarize in this conversation. No recap was published.";
+  if (code === "RECAP_CUT_SHORT") return "The AI ran out of room before it finished the recap. No recap was published.";
+  if (/^(INVALID_RECAP|RECAP_NO_TEXT$|RECAP_NOT_JSON$)/.test(code)) return "The AI response did not pass validation. No recap was published.";
   return "AI processing failed. The temporary audio was deleted; no recap was published.";
 }
 

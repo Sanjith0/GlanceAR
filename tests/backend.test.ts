@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { convexTest } from "convex-test";
 import { anyApi } from "convex/server";
 import schema from "../convex/schema";
-import { validateRecap, validateWav } from "../convex/validation";
+import { tidyRecap, validateRecap, validateWav } from "../convex/validation";
+import { recapFromReply, safeError } from "../convex/meta";
+import { nameSpeakers, speakerLoudness, transcriptOnly } from "../convex/speakers";
+import { transcriptLines } from "../src/transcriptView";
 import { RECORDING_FRESHNESS_MS } from "../src/domain";
 
 const modules = {
@@ -19,7 +22,8 @@ const input = (name: string) => ({ name, role: "Builder", photoUrl: selfie });
 const makeTest = () => convexTest({ schema, modules, transactionLimits: true });
 type Test = ReturnType<typeof makeTest>;
 
-function wav(seconds = 1) {
+/** `level` gives the sample amplitude at a moment; silence without it. */
+function wav(seconds = 1, level?: (ms: number) => number) {
   const buffer = new ArrayBuffer(44 + seconds * 32_000);
   const view = new DataView(buffer);
   const write = (at: number, s: string) => [...s].forEach((c, i) => view.setUint8(at + i, c.charCodeAt(0)));
@@ -28,6 +32,8 @@ function wav(seconds = 1) {
   view.setUint32(24, 16_000, true); view.setUint32(28, 32_000, true);
   view.setUint16(32, 2, true); view.setUint16(34, 16, true);
   write(36, "data"); view.setUint32(40, buffer.byteLength - 44, true);
+  // A square wave at the given amplitude, so loudness differs between parts of the recording.
+  if (level) for (let i = 0; i < seconds * 16_000; i++) view.setInt16(44 + i * 2, (i % 2 ? 1 : -1) * level(i / 16), true);
   return buffer;
 }
 async function setup(t: Test) {
@@ -57,15 +63,15 @@ async function ended(t: Test) {
   await t.mutation(api.stop, { token: tokens[1], ...base });
   return state;
 }
-async function upload(t: Test, conversationId: string) {
+async function upload(t: Test, conversationId: string, audio = wav()) {
   await t.mutation(api.createUploadUrl, { token: tokens[0], conversationId });
-  const storageId = await t.run((ctx) => ctx.storage.store(new Blob([wav()], { type: "audio/wav" })));
+  const storageId = await t.run((ctx) => ctx.storage.store(new Blob([audio], { type: "audio/wav" })));
   await t.mutation(api.attachAudio, { token: tokens[0], conversationId, storageId, mimeType: "audio/wav" });
   return storageId;
 }
-async function processing(t: Test) {
+async function processing(t: Test, audio?: ArrayBuffer) {
   const state = await ended(t);
-  const storageId = await upload(t, state.conversationId);
+  const storageId = await upload(t, state.conversationId, audio);
   for (const token of tokens.slice(0, 2)) await t.mutation(api.confirmExchange, { token, conversationId: state.conversationId });
   return { ...state, storageId };
 }
@@ -356,6 +362,84 @@ describe("private audio, two-person exchange, processing, and deletion", () => {
     expect(result.recap).toEqual({ ...recap, transcript: expect.any(Array) });
     expect(await t.run((ctx) => ctx.storage.get(s.storageId))).toBeNull();
   });
+  it("asks once more when the first reply has no usable recap, then publishes the second", async () => {
+    const t = makeTest(); const s = await processing(t);
+    vi.stubEnv("META_API_KEY", "unit-test-not-a-real-key");
+    const good = { summary: recap.summary, topics: recap.topics, nextSteps: [] };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ transcript: "We discussed prototypes." })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: null }, finish_reason: "length" }] })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(good) } }] })));
+    vi.stubGlobal("fetch", fetchMock);
+    await t.action(anyApi.pipeline.process, { conversationId: s.conversationId, generation: 1 });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const result = (await t.query(api.snapshot, { token: tokens[0] })).conversations[0];
+    expect(result.status).toBe("shared");
+    expect(result.recap).toEqual({ ...recap, nextSteps: [], transcript: expect.any(Array) });
+  });
+  it("shares what was said, under each person's name, when the summary cannot be written", async () => {
+    // The quiet voice speaks first, the loud one second. The recorder (Person 0) is on their own device: the loud one.
+    const t = makeTest(); const s = await processing(t, wav(1, (ms) => ms < 450 ? 400 : 9_000));
+    vi.stubEnv("META_API_KEY", "unit-test-not-a-real-key");
+    const turns = [
+      { speaker: "B", startMs: 0, endMs: 400, transcript: "hello" },
+      { speaker: "A", startMs: 500, endMs: 1_000, transcript: "hey whats up" },
+    ];
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ transcript: "hello hey whats up", turns })))
+      .mockImplementation(async () => new Response("private-provider-error", { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    await t.action(anyApi.pipeline.process, { conversationId: s.conversationId, generation: 1 });
+    expect(logged.mock.calls.flat()).toEqual(["Recap summary failed, sharing the transcript alone: SUMMARY_HTTP_500"]);
+    logged.mockRestore();
+    const mine = (await t.query(api.snapshot, { token: tokens[0] })).conversations[0];
+    const theirs = (await t.query(api.snapshot, { token: tokens[1] })).conversations[0];
+    expect(mine.status).toBe("shared"); expect(mine.error).toBeUndefined();
+    expect(mine.recap).toEqual({
+      summary: "", topics: [], nextSteps: [], source: "transcript",
+      transcript: [
+        { speaker: "Speaker 1", speakerId: s.b, startMs: 0, endMs: 400, text: "hello" },
+        { speaker: "Speaker 2", speakerId: s.a, startMs: 500, endMs: 1_000, text: "hey whats up" },
+      ],
+    });
+    expect(theirs.recap).toEqual(mine.recap);
+    expect(transcriptLines(mine.recap.transcript, mine.participants)).toMatchObject({
+      named: true, lines: [{ name: "Person 1", text: "hello" }, { name: "Person 0", text: "hey whats up" }],
+    });
+    expect(await t.run((ctx) => ctx.storage.get(s.storageId))).toBeNull();
+  });
+  it("shares an unsplit transcript without names when the model twice finds nothing to summarize", async () => {
+    const t = makeTest(); const s = await processing(t);
+    vi.stubEnv("META_API_KEY", "unit-test-not-a-real-key");
+    const empty = () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ summary: " ", topics: [], nextSteps: [] }) } }] }));
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ transcript: "Testing. Testing." })))
+      .mockImplementation(async () => empty());
+    vi.stubGlobal("fetch", fetchMock);
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    await t.action(anyApi.pipeline.process, { conversationId: s.conversationId, generation: 1 });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(logged.mock.calls.flat()).toEqual(["Recap summary failed, sharing the transcript alone: EMPTY_RECAP"]);
+    logged.mockRestore();
+    const result = (await t.query(api.snapshot, { token: tokens[0] })).conversations[0];
+    expect(result.status).toBe("shared");
+    expect(result.recap).toEqual({
+      summary: "", topics: [], nextSteps: [], source: "transcript",
+      transcript: [{ speaker: "", startMs: 0, endMs: expect.any(Number), text: "Testing. Testing." }],
+    });
+    expect(transcriptLines(result.recap.transcript, result.participants)).toMatchObject({ named: false, lines: [{ name: "", text: "Testing. Testing." }] });
+    expect(await t.run((ctx) => ctx.storage.get(s.storageId))).toBeNull();
+  });
+  it("still fails plainly when nothing intelligible was said", async () => {
+    const t = makeTest(); const s = await processing(t);
+    vi.stubEnv("META_API_KEY", "unit-test-not-a-real-key");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ transcript: "  " }))));
+    await t.action(anyApi.pipeline.process, { conversationId: s.conversationId, generation: 1 });
+    const result = (await t.query(api.snapshot, { token: tokens[0] })).conversations[0];
+    expect(result.status).toBe("failed"); expect(result.recap).toBeUndefined();
+    expect(result.error).toContain("No intelligible speech");
+  });
   it("cancellation while transcription is in-flight blocks the second call and publication", async () => {
     const t = makeTest(); const s = await processing(t);
     vi.stubEnv("META_API_KEY", "unit-test-not-a-real-key");
@@ -419,5 +503,73 @@ describe("provider data validation", () => {
     expect(() => validateRecap({ summary: "", topics: [], nextSteps: [] })).toThrow();
     expect(() => validateRecap({ summary: "test", topics: [123], nextSteps: [] })).toThrow();
     expect(() => validateRecap({ summary: "x".repeat(2001), topics: [], nextSteps: [] })).toThrow();
+  });
+  it("names the flaw in the code it throws, never the text", () => {
+    expect(() => validateRecap(["a list"])).toThrow("INVALID_RECAP_SHAPE");
+    expect(() => validateRecap({ summary: "test", topics: [], nextSteps: [], source: "sample" })).toThrow("INVALID_RECAP_FIELDS");
+    expect(() => validateRecap({ summary: "", topics: [], nextSteps: [] })).toThrow("INVALID_RECAP_SUMMARY");
+    expect(() => validateRecap({ summary: "test", topics: [123], nextSteps: [] })).toThrow("INVALID_RECAP_TOPICS");
+    expect(() => validateRecap({ summary: "test", topics: [], nextSteps: [""] })).toThrow("INVALID_RECAP_NEXT_STEPS");
+    for (const code of ["INVALID_RECAP_SHAPE", "INVALID_RECAP_NEXT_STEPS", "RECAP_NO_TEXT", "RECAP_NOT_JSON"]) {
+      expect(safeError(new Error(code))).toContain("did not pass validation");
+    }
+    expect(safeError(new Error("RECAP_CUT_SHORT"))).toContain("ran out of room");
+  });
+  it("keeps a recap whose only flaws are blank items, stray spaces, a missing list or overlong text", () => {
+    const tidy = tidyRecap({ summary: "  They compared prototypes.  ", topics: ["", " hardware ", "x".repeat(400)], nextSteps: null }) as Record<string, unknown>;
+    expect(validateRecap(tidy)).toEqual({ summary: "They compared prototypes.", topics: ["hardware", `${"x".repeat(299)}…`], nextSteps: [], source: "ai" });
+    expect(validateRecap(tidyRecap({ summary: "y".repeat(2500), topics: Array.from({ length: 20 }, (_, i) => `topic ${i}`), nextSteps: [] })))
+      .toMatchObject({ summary: `${"y".repeat(1999)}…`, topics: Array.from({ length: 12 }, (_, i) => `topic ${i}`) });
+    // Tidying never rescues the wrong shape or a fabricated flag.
+    expect(() => validateRecap(tidyRecap({ summary: "test", topics: [123], nextSteps: [] }))).toThrow("INVALID_RECAP_TOPICS");
+    expect(() => validateRecap(tidyRecap({ summary: "test", topics: [], nextSteps: [], source: "sample" }))).toThrow("INVALID_RECAP_FIELDS");
+    expect(() => validateRecap(tidyRecap({ summary: "test", topics: [] }))).toThrow("INVALID_RECAP_FIELDS");
+  });
+  it("puts the recorder to the louder voice, and names nobody without two voices to compare", () => {
+    const audio = wav(2, (ms) => ms < 1_000 ? 6_000 : 700);
+    const turn = (speaker: string, startMs: number, endMs: number) => ({ speaker, startMs, endMs, text: "words" });
+    const two = [turn("Speaker 1", 0, 900), turn("Speaker 2", 1_100, 1_900), turn("Speaker 1", 1_950, 2_000)];
+    expect([...speakerLoudness(audio, two).keys()]).toEqual(["Speaker 1", "Speaker 2"]);
+    expect(nameSpeakers(two, audio, "recorder", "partner").map((t) => t.speakerId)).toEqual(["recorder", "partner", "recorder"]);
+    // The other way round: the first voice is the quiet one.
+    expect(nameSpeakers(two, wav(2, (ms) => ms < 1_000 ? 700 : 6_000), "recorder", "partner").map((t) => t.speakerId)).toEqual(["partner", "recorder", "partner"]);
+    // A third voice in the room keeps its anonymous label.
+    const three = [...two, turn("Speaker 3", 1_000, 1_050)];
+    expect(nameSpeakers(three, audio, "recorder", "partner").at(-1)).not.toHaveProperty("speakerId");
+    // One voice, no partner, or audio that cannot be read: no names.
+    expect(nameSpeakers([turn("Speaker 1", 0, 900)], audio, "recorder", "partner")).toEqual([turn("Speaker 1", 0, 900)]);
+    expect(nameSpeakers(two, audio, "recorder", undefined)).toEqual(two);
+    expect(nameSpeakers(two, new ArrayBuffer(8), "recorder", "partner")).toEqual(two);
+    expect(transcriptOnly(two, "ignored", 2_000).transcript).toBe(two);
+  });
+  it("shows a matched voice by name, an unmatched one by its speaker number", () => {
+    const people = [{ id: "a", name: "Sanjith Tamballa" }, { id: "b", name: "Afnan Hasan" }];
+    const view = transcriptLines([
+      { speaker: "Speaker 1", speakerId: "b", startMs: 0, endMs: 400, text: "hello" },
+      { speaker: "Speaker 2", speakerId: "a", startMs: 500, endMs: 900, text: "hey whats up" },
+      { speaker: "Speaker 3", startMs: 950, endMs: 990, text: "excuse me" },
+      { speaker: "Speaker 1", speakerId: "gone", startMs: 995, endMs: 999, text: "bye" },
+    ], people);
+    expect(view.named).toBe(true);
+    expect(view.lines.map((line) => `${line.name}: ${line.text}`)).toEqual([
+      "Afnan Hasan: hello", "Sanjith Tamballa: hey whats up", "Speaker 3: excuse me", "Speaker 1: bye",
+    ]);
+    expect(view.lines[0].tone).not.toBe(view.lines[1].tone);
+    expect(transcriptLines(undefined, people)).toEqual({ lines: [], named: false });
+  });
+  it("reads a recap from text parts, a code fence or a line of preamble, and says how a reply fell short", () => {
+    const body = { summary: "They compared prototypes.", topics: ["hardware"], nextSteps: [] };
+    const reply = (content: unknown, finish_reason = "stop") => ({ choices: [{ message: { content }, finish_reason }] });
+    const expected = { ...body, source: "ai" };
+    expect(recapFromReply(reply(JSON.stringify(body)))).toEqual(expected);
+    expect(recapFromReply(reply([{ type: "text", text: JSON.stringify(body) }]))).toEqual(expected);
+    expect(recapFromReply(reply("```json\n" + JSON.stringify(body) + "\n```"))).toEqual(expected);
+    expect(recapFromReply(reply(`Here is the recap:\n${JSON.stringify(body)}`))).toEqual(expected);
+    expect(() => recapFromReply(reply(null))).toThrow("RECAP_NO_TEXT");
+    expect(() => recapFromReply({})).toThrow("RECAP_NO_TEXT");
+    expect(() => recapFromReply(reply("", "length"))).toThrow("RECAP_CUT_SHORT");
+    expect(() => recapFromReply(reply('{"summary": "They compared', "length"))).toThrow("RECAP_CUT_SHORT");
+    expect(() => recapFromReply(reply("I cannot summarize this."))).toThrow("RECAP_NOT_JSON");
+    expect(() => recapFromReply(reply(JSON.stringify({ summary: "", topics: [], nextSteps: [] })))).toThrow("EMPTY_RECAP");
   });
 });

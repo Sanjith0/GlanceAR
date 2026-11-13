@@ -21,6 +21,7 @@ export const claim = internalMutation({
     await ctx.db.patch(c!._id, { claimedGeneration: args.generation });
     return {
       storageId: c!.audioStorageId!, startedAt: c!.startedAt!, endedAt: c!.endedAt!,
+      recorderId: c!.recorderId, partnerId: participants(c!).find((id) => id !== c!.recorderId),
     };
   },
 });

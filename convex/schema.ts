@@ -5,10 +5,15 @@ export const recapValidator = v.object({
   summary: v.string(),
   topics: v.array(v.string()),
   nextSteps: v.array(v.string()),
-  source: v.literal("ai"),
-  /** Anonymous diarized turns ("Speaker 1"…), shown behind a button in chat. */
+  /** "transcript": the AI summary could not be written, so only what was said is shared (summary is empty). */
+  source: v.union(v.literal("ai"), v.literal("transcript")),
+  /**
+   * Diarized turns ("Speaker 1"…). `speakerId` is the participant a voice is estimated to
+   * belong to (convex/speakers.ts); the chat shows that name and says it is an estimate.
+   */
   transcript: v.optional(v.array(v.object({
     speaker: v.string(), startMs: v.number(), endMs: v.number(), text: v.string(),
+    speakerId: v.optional(v.id("profiles")),
   }))),
 });
 
