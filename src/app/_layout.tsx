@@ -5,6 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFonts } from 'expo-font';
 import { GlanceProvider } from '../state';
+import { ConversationAutoOpen } from '../ConversationAutoOpen';
 import { colors, s } from '../theme';
 import { announceFacebookReturn, parseFacebookReturn, type FacebookReturn } from '../discover/facebook';
 
@@ -37,7 +38,7 @@ export default function RootLayout() {
   // Before the fonts: the one-time code should leave the address bar straight away.
   if (facebookReturn) return <FacebookReturnScreen result={facebookReturn} />;
   if (!loaded && !error) return <View style={[s.shell, { justifyContent: 'center' }]}><ActivityIndicator color={colors.blue} /></View>;
-  return <GlanceProvider><View style={s.shell}><SafeAreaView edges={['top', 'bottom']} style={s.app}>
+  return <GlanceProvider><ConversationAutoOpen /><View style={s.shell}><SafeAreaView edges={['top', 'bottom']} style={s.app}>
     <StatusBar style="dark" /><Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.paper }, animation: 'fade' }} />
   </SafeAreaView></View></GlanceProvider>;
 }

@@ -13,7 +13,7 @@ const STORAGE_KEY = 'glance.conversationCamera';
 const listeners = new Set<() => void>();
 let memory: CameraDevice | null = null;
 
-type ShellWindow = { __glanceGlassesCamera?: { available?: boolean } };
+type ShellWindow = { __glanceGlassesCamera?: { available?: boolean; statusText?: string } };
 
 export function glassesShellAvailable(): boolean {
   if (typeof window === 'undefined') return false;
@@ -59,4 +59,18 @@ export async function acquireGlassesStream(signal?: AbortSignal): Promise<LiveCa
       stream.getTracks().forEach(track => track.stop());
     },
   } as LiveCameraLease;
+}
+
+/**
+ * What the glasses are doing while the camera starts ("Looking for your glasses…",
+ * "Trying again (2 of 3)…"), as the iPhone shell reports it. Calls back with the latest
+ * line now and on every change; older shells never report, so nothing is shown for them.
+ */
+export function onGlassesStatus(listener: (text: string) => void): () => void {
+  if (typeof window === 'undefined') return () => {};
+  const latest = (window as unknown as ShellWindow).__glanceGlassesCamera?.statusText;
+  if (latest) listener(latest);
+  const handle = (event: Event) => { listener(String((event as CustomEvent<string>).detail ?? '')); };
+  window.addEventListener('glanceglassesstatus', handle);
+  return () => { window.removeEventListener('glanceglassesstatus', handle); };
 }

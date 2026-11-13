@@ -36,6 +36,7 @@ final class GlanceWebHost: NSObject, ObservableObject, WKScriptMessageHandler, W
     super.init()
     webView.uiDelegate = self
     content.add(WeakMessageHandler(self), name: "glanceGlasses")
+    camera.onStatus = { [weak self] text in self?.reportStatus(text) }
     if let webURL { webView.load(URLRequest(url: webURL)) }
     // The glasses are also a Bluetooth headset. When the page starts recording, iOS may
     // move the microphone to them, which switches the glasses into call audio while they
@@ -92,6 +93,12 @@ final class GlanceWebHost: NSObject, ObservableObject, WKScriptMessageHandler, W
   func reportFailure(_ message: String) {
     let quoted = (try? String(data: JSONEncoder().encode(message), encoding: .utf8)) ?? "\"Glasses camera stopped.\""
     webView.evaluateJavaScript("window.__glanceGlassesCamera && window.__glanceGlassesCamera.failed(\(quoted))")
+  }
+
+  /// What the glasses are doing right now, shown by the page while the camera starts.
+  func reportStatus(_ text: String) {
+    let quoted = (try? String(data: JSONEncoder().encode(text), encoding: .utf8)) ?? "\"\""
+    webView.evaluateJavaScript("window.__glanceGlassesCamera && window.__glanceGlassesCamera.status && window.__glanceGlassesCamera.status(\(quoted))")
   }
 
   /// The glasses paused or resumed the video. The page keeps its camera open and waits.

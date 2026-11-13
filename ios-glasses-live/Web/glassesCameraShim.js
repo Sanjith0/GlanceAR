@@ -17,7 +17,9 @@
   var native = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.glanceGlasses;
   if (!native) return;
 
-  var FIRST_FRAME_TIMEOUT_MS = 15000;
+  // The app waits for the glasses to connect and retries by itself (see GlassesCamera.swift),
+  // which can take over a minute in the worst case. This is only the last resort after that.
+  var FIRST_FRAME_TIMEOUT_MS = 90000;
   var STALL_TIMEOUT_MS = 4000;
   // Keep the glasses session open briefly after the last track stops so the
   // LIVE Camera -> conversation handoff does not restart the DAT session.
@@ -213,6 +215,12 @@
       if (!decoding) pump();
     },
     failed: function (message) { fail(String(message || 'The Meta glasses camera stopped.')); },
+    // What the glasses are doing, as a short line, while the camera starts.
+    statusText: '',
+    status: function (text) {
+      this.statusText = String(text || '');
+      try { window.dispatchEvent(new CustomEvent('glanceglassesstatus', { detail: this.statusText })); } catch (e) { /* no listener */ }
+    },
     // The glasses paused (true) or resumed (false) the video. Tracks stay open meanwhile.
     paused: function (value) {
       if (state === 'idle') return;

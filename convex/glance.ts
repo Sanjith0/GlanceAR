@@ -360,7 +360,14 @@ export const createConversation = mutation({
       fail("Both attendees must opt in to event recording and gesture sharing.");
     }
     for (const id of [me._id, args.partnerId]) {
-      if (await activePairing(ctx, id)) fail("An attendee already has an active pairing.");
+      const active = await activePairing(ctx, id);
+      if (!active) continue;
+      // The two of them are already in a conversation here (for example both tapped at
+      // once, or one tapped again): that is the conversation, not an error.
+      const pair = [active.participantA, active.participantB];
+      if (active.eventId === args.eventId && pair.includes(me._id) && pair.includes(args.partnerId)) return active._id;
+      fail(id === me._id ? "You are already in a conversation. Finish or leave it first."
+        : "They are already in a conversation with someone else.");
     }
     return insertConversation(ctx, args.eventId, own, other, args.mode, args.source);
   },

@@ -18,6 +18,7 @@ import { CameraPicker } from './CameraPicker';
 import { PersonCardView } from './PersonCards';
 import { GLASSES_THUMBNAIL, glassesViewSize, PeopleCardTracker, type PersonCard } from './peopleCards';
 import { TapCounter } from './secretTaps';
+import { markConversationOpened } from './conversationOpen';
 import { createDevClient } from './data/devClient';
 
 const firstName = (name: string) => name.split(' ')[0];
@@ -225,6 +226,7 @@ export function LiveCameraScreen() {
         leaving.current = false;
         return;
       }
+      markConversationOpened(targetConversationId);
       router.replace(`/conversation/${targetConversationId}`);
       dispatched = true;
     }).catch(error => {
@@ -261,7 +263,9 @@ export function LiveCameraScreen() {
     reports.current.set(personId, now);
     const name = firstName(people.get(personId)?.name ?? 'They');
     app.reportSighting(id, personId).then(result => setPairing(old => ({ ...old, [personId]:
-      result.status === 'waiting' ? `Waiting for ${name} to recognize you`
+      // "waiting" only means their camera has not recognized this person back. That is no
+      // longer something to wait for: the arrow or Start conversation begins it for both.
+      result.status === 'waiting' ? `${name} recognized`
         : result.status === 'busy' && !result.conversationId ? `${name} is in another conversation` : 'Starting your conversation…' })))
       .catch(error => setPairing(old => ({ ...old, [personId]: error instanceof Error ? error.message : 'Could not start a conversation.' })))
       .finally(() => inFlight.current.delete(personId));
@@ -372,10 +376,11 @@ export function LiveCameraScreen() {
         <View style={{ gap: 12 }}><Text style={[s.eyebrow, { fontSize: 10, letterSpacing: 1 }]}>STEP 2 OF 2</Text>
           <Text style={s.title}>Who’s here?</Text>
           <Text style={s.muted}>{cameraDevice === 'glasses'
-            ? 'Look at the person you’re meeting through your glasses for two seconds. You count as present, so only they need to be in view.'
+            ? live ? 'Look around. Each person your glasses recognize gets a card with what to talk about. Tap the arrow on a card to start a conversation; it brings you both in.'
+              : 'Look at the person you’re meeting through your glasses for two seconds. You count as present, so only they need to be in view.'
             : app.mode === 'demo'
             ? 'Keep both registered faces in this camera for two seconds. If either leaves, the countdown restarts.'
-            : 'Face the person you’re talking to and point your camera at them while they point theirs at you. Hold for two seconds; once both phones recognize each other, your conversation starts.'}</Text>
+            : 'Point your camera at the person you’re talking to and hold for two seconds. Once they are recognized, tap Start conversation and you both go in.'}</Text>
           {<View testID="recognition-countdown"
             accessibilityLiveRegion="polite"
             style={[s.soft, { backgroundColor: counting || demoPairPending || liveHeldId ? colors.blueLight : colors.canvas,
@@ -385,14 +390,17 @@ export function LiveCameraScreen() {
                 <Text style={[s.eyebrow, { fontSize: 10, letterSpacing: 1 }]}>{live ? 'LIVE RECOGNITION' : 'SAME-CAMERA DEMO'}</Text>
                 {live ? <>
                   <Text style={s.label}>{active ? 'Opening your conversation…'
-                    : liveHeldId ? pairing[liveHeldId] ?? `Connecting with ${heldName}…`
+                    : demoPairPending ? 'Starting your conversation…'
+                      : liveHeldId ? pairing[liveHeldId] ?? `${heldName} recognized`
                       : counting ? `${partnerName} recognized. Hold steady.` : 'Looking for a registered attendee'}</Text>
                   <Text style={s.small}>{active ? 'Keeping your camera live.'
-                    : liveHeldId ? `${heldName}’s phone has to hold you in view too. Keep facing each other.`
+                    : demoPairPending ? `Bringing you and ${heldName} into the conversation.`
+                      : liveHeldId ? glassesMode ? `Tap the arrow on ${heldName}’s card, or Start conversation, to begin. It brings you both in.`
+                        : `Tap Start conversation to begin. It brings you both in.`
                       : counting ? 'Keep them in view until the countdown finishes.'
                         : !directory?.scanned ? 'Go back to registration and scan your own face.'
                           : recognizable === 0 ? 'Nobody else here has a face scan yet.'
-                            : 'Point your camera at one person while their phone points at you.'}</Text>
+                            : glassesMode ? 'Look at someone who registered their face.' : 'Point your camera at one person.'}</Text>
                 </> : <>
                 <Text style={s.label}>{demoPairPending ? 'Starting your conversation…'
                   : active ? 'A conversation is already open.'
@@ -422,6 +430,8 @@ export function LiveCameraScreen() {
               <View style={{ height: 4, borderRadius: 2, backgroundColor: colors.blue,
                 width: `${Math.round(countdownView.progress * 100)}%` }} />
             </View>
+            {live && liveHeldId && !active && <Button testID="start-conversation" icon="arrow-right" busy={demoPairPending}
+              onPress={() => pairAfterHold(liveHeldId)}>{`Start conversation with ${heldName}`}</Button>}
             {!live && active && !demoPairPending && <Button tone="secondary" icon="arrow-right"
               disabled={busy}
               onPress={() => {

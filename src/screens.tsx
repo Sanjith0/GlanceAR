@@ -11,6 +11,7 @@ import { ModeSwitch } from './discover/ModeSwitch';
 import { MatchStatus, SharedWith, byShared, useAutoMatch } from './discover/PeopleMatch';
 import { matchPeople } from './discover/api';
 import { externalJoinHref, peekPendingJoin } from './externalJoin';
+import { claimConversationOpen, markConversationOpened } from './conversationOpen';
 import { MatchName } from './PersonCards';
 const firstName = (name: string) => name.split(' ')[0];
 import { samplePeople } from './demo';
@@ -221,6 +222,7 @@ export function EventScreen() {
         return;
       }
       visited.current.add(next);
+      markConversationOpened(next); // this screen opens it; the app-wide watcher must not open it again
       router.push(`/conversation/${next}`);
     }
     catch (error) { navigating.current = false; throw error; }
@@ -234,6 +236,8 @@ export function EventScreen() {
     if (!focused || !enabled || !captureReady || navigating.current) return;
     if (active && !visited.current.has(active.id)) {
       visited.current.add(active.id);
+      // The app-wide watcher may already have opened it; only one of us navigates.
+      if (!claimConversationOpen(active.id)) return;
       navigating.current = true;
       router.push(`/conversation/${active.id}`);
       return;

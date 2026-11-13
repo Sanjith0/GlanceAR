@@ -6,7 +6,7 @@ import { projectBox, type FaceBox } from '../face';
 import { cropFace, detectFaces, farDescriptors, faceEngineSupported, loadFaceEngine, type DetectedFace } from './faceEngine';
 import { FACE_FAR_BLURS, FACE_FAR_WIDTHS } from '../domain';
 import { acquireLiveCameraStream, type LiveCameraLease } from './liveCameraStream';
-import { acquireGlassesStream, type CameraDevice } from './glassesBridge';
+import { acquireGlassesStream, onGlassesStatus, type CameraDevice } from './glassesBridge';
 import { startFreshFaceFrames } from './faceFrameFreshness';
 import { FaceScanGuide, type ScanGuide } from './FaceScanGuide';
 import { PlaybackBlocked, startVideo } from './videoPlayback';
@@ -62,12 +62,20 @@ export default function FaceCamera({ active, scopeId = 'live:camera', overlays, 
   const [visible, setVisible] = useState(() => typeof document === 'undefined' || document.visibilityState === 'visible');
   const [visibilityEpoch, setVisibilityEpoch] = useState(0);
   const supported = faceEngineSupported();
-  const identity = JSON.stringify([active, scopeId, facing, visible, visibilityEpoch, supported, device, far, fast]);
+  // Bumped to start the camera again: by the Retry button, or by itself for the glasses.
+  const [retry, setRetry] = useState(0);
+  const [failed, setFailed] = useState(false);
+  const autoRetries = useRef(0);
+  // What the iPhone shell says the glasses are doing while they start.
+  const [glassesStatus, setGlassesStatus] = useState('');
+  useEffect(() => (device === 'glasses' ? onGlassesStatus(setGlassesStatus) : undefined), [device]);
+  const identity = JSON.stringify([active, scopeId, facing, visible, visibilityEpoch, supported, device, far, fast, retry]);
   const latest = useRef({ identity, onFrame, onCameraReset, blocked: !active || !visible });
   const committedIdentity = useRef<string | null>(null);
   const [renderedIdentity, setRenderedIdentity] = useState(identity);
   if (renderedIdentity !== identity) {
     setRenderedIdentity(identity);
+    setFailed(false);
     setStatus('Starting camera…');
     setSource({ width: 0, height: 0 });
   }
@@ -113,11 +121,27 @@ export default function FaceCamera({ active, scopeId = 'live:camera', overlays, 
     const liveTrack = () => Boolean(lease?.stream.getVideoTracks().some(track => track.readyState === 'live'));
     const documentVisible = () => document.visibilityState === 'visible';
     const reset = () => { if (current()) latest.current.onCameraReset?.(); };
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    /**
+     * The camera could not start, or stopped. The glasses often answer on a second try
+     * (they were asleep, or still connecting), so they are tried again twice before the
+     * Retry button is shown. Nobody should have to leave the screen to try again.
+     */
+    const giveUp = (message: string) => {
+      if (device === 'glasses' && autoRetries.current < 2) {
+        autoRetries.current += 1;
+        setStatus('Reconnecting to your glasses…');
+        retryTimer = setTimeout(() => { if (current()) setRetry(value => value + 1); }, 2_000);
+        return;
+      }
+      setFailed(true);
+      setStatus(message);
+    };
     const cameraStopped = () => {
       if (!current()) return;
       stopFrames?.();
       reset();
-      setStatus('Camera stopped. Reopen LIVE Camera to continue.');
+      giveUp(device === 'glasses' ? 'The glasses camera stopped.' : 'Camera stopped.');
     };
     (async () => {
       try {
@@ -156,6 +180,7 @@ export default function FaceCamera({ active, scopeId = 'live:camera', overlays, 
         await models;
         if (!current()) return;
         if (!liveTrack() || !documentVisible()) { cameraStopped(); return; }
+        autoRetries.current = 0;
         setStatus('Live');
         stopFrames = startFreshFaceFrames({
           video: element, detectFaces: v => detectFaces(v, { far }), isCurrent: current, isLive: liveTrack, isVisible: documentVisible,
@@ -179,10 +204,10 @@ export default function FaceCamera({ active, scopeId = 'live:camera', overlays, 
         lease = null;
         if (element) element.srcObject = null;
         const name = error instanceof Error ? error.name : '';
-        setStatus(error instanceof PlaybackBlocked ? 'The live view did not start by itself. Go back and reopen LIVE Camera.'
-          : name === 'NotAllowedError' ? 'Camera permission is off. Allow camera access for this site and reopen LIVE Camera.'
-          : name === 'NotFoundError' ? 'No camera was found on this device.'
-            : `Camera unavailable: ${error instanceof Error ? error.message : 'unknown error'}`);
+        if (error instanceof PlaybackBlocked) { setFailed(true); setStatus('The live view did not start by itself. Tap Retry to show it.'); }
+        else if (name === 'NotAllowedError') { setFailed(true); setStatus('Camera permission is off. Allow camera access for this site, then tap Retry.'); }
+        else if (name === 'NotFoundError') { setFailed(true); setStatus('No camera was found on this device.'); }
+        else giveUp(`Camera unavailable: ${error instanceof Error ? error.message : 'unknown error'}`);
       }
     })();
     return () => {
@@ -190,16 +215,19 @@ export default function FaceCamera({ active, scopeId = 'live:camera', overlays, 
       // call a new scope's callback; ordinary unmount still resets immediately.
       reset();
       stopped = true;
+      clearTimeout(retryTimer);
       stopFrames?.();
       unwatchTracks?.();
       controller.abort();
       lease?.release();
       if (element) element.srcObject = null;
     };
-  }, [active, visible, supported, facing, scopeId, device, far, fast, identity]);
+  }, [active, visible, supported, facing, scopeId, device, far, fast, retry, identity]);
 
   const shown = !active || !visible ? 'Camera off'
-    : !supported ? 'This browser can’t open the camera here. Use a current browser over HTTPS or localhost.' : status;
+    : !supported ? 'This browser can’t open the camera here. Use a current browser over HTTPS or localhost.'
+      // While the glasses start, say what they are doing instead of a bare "Starting camera".
+      : device === 'glasses' && status === 'Starting camera…' && glassesStatus && !glassesStatus.startsWith('Live') ? glassesStatus : status;
   const live = shown === 'Live';
   return <View style={[styles.frame, style]} onLayout={e => setView({ width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height })}>
     <video ref={video} muted playsInline autoPlay aria-label="LIVE Camera view"
@@ -231,7 +259,10 @@ export default function FaceCamera({ active, scopeId = 'live:camera', overlays, 
       </React.Fragment>;
     })}
     {!live && <View style={styles.status}><Icon name={active ? 'camera' : 'camera-off'} size={26} color="#BCD1D6" />
-      <Text style={styles.statusText}>{shown}</Text></View>}
+      <Text accessibilityLiveRegion="polite" style={styles.statusText}>{shown}</Text>
+      {failed && active && visible && <Pressable testID="camera-retry" accessibilityRole="button" accessibilityLabel="Retry the camera"
+        onPress={() => { autoRetries.current = 0; setRetry(value => value + 1); }} style={styles.retry}>
+        <Text style={styles.retryText}>Retry</Text></Pressable>}</View>}
     {live && cameras > 1 && device === 'phone' && <Pressable accessibilityRole="button" accessibilityLabel="Switch camera"
       onPress={() => {
         latest.current.blocked = true;
@@ -251,6 +282,8 @@ const styles = StyleSheet.create({
   point: { color: '#FFFFFF', fontFamily: fonts.body, fontSize: 12, lineHeight: 17 },
   status: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, alignItems: 'center', justifyContent: 'center', padding: 28, gap: 12 },
   statusText: { color: '#FFFFFF', fontFamily: fonts.body, fontSize: 14, lineHeight: 21, textAlign: 'center' },
+  retry: { minHeight: 44, minWidth: 120, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, borderRadius: 12, backgroundColor: '#FFFFFF' },
+  retryText: { color: '#17323b', fontFamily: fonts.semibold, fontSize: 14 },
   flip: { position: 'absolute', top: 12, right: 12, width: 44, height: 44, borderRadius: 22,
     alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.5)' },
 });
