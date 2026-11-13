@@ -22,20 +22,25 @@ export function faceEngineSupported(): boolean {
     && Boolean(navigator.mediaDevices?.getUserMedia) && window.isSecureContext;
 }
 
+/** Hands the main thread back so taps and scrolling are handled between the heavy steps below. */
+const breathe = () => new Promise<void>(resolve => setTimeout(resolve, 20));
+
 export function loadFaceEngine(): Promise<FaceApi> {
   engine ??= (async () => {
     const faceapi = await import('@vladmandic/face-api');
+    await breathe();
     // The bundled TensorFlow.js has these at runtime; face-api's typings omit them.
     const tf = faceapi.tf as unknown as { setBackend(name: string): Promise<boolean>; ready(): Promise<void> };
     const webgl = await tf.setBackend('webgl').catch(() => false);
     if (!webgl) await tf.setBackend('cpu');
     await tf.ready();
+    await breathe();
     const base = modelBase();
-    await Promise.all([
-      faceapi.nets.tinyFaceDetector.loadFromUri(base),
-      faceapi.nets.faceLandmark68Net.loadFromUri(base),
-      faceapi.nets.faceRecognitionNet.loadFromUri(base),
-    ]);
+    for (const load of [
+      () => faceapi.nets.tinyFaceDetector.loadFromUri(base),
+      () => faceapi.nets.faceLandmark68Net.loadFromUri(base),
+      () => faceapi.nets.faceRecognitionNet.loadFromUri(base),
+    ]) { await load(); await breathe(); }
     // The first WebGL run of each net compiles its shaders, which can take seconds on
     // phones. Do it once on a blank canvas so the first real frame is fast.
     if (webgl) await warmUp(faceapi).catch(() => {});
@@ -51,7 +56,9 @@ async function warmUp(faceapi: FaceApi): Promise<void> {
   const canvas = document.createElement('canvas');
   canvas.width = 416; canvas.height = 416;
   await faceapi.detectAllFaces(canvas, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 }));
+  await breathe();
   await faceapi.nets.faceLandmark68Net.detectLandmarks(canvas);
+  await breathe();
   await faceapi.nets.faceRecognitionNet.computeFaceDescriptor(canvas);
 }
 

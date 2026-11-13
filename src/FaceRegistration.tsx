@@ -26,8 +26,14 @@ export function FaceRegistrationScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const app = useGlance(), { busy, perform } = useOperation();
   const focused = useScreenFocused();
-  // Models download and warm up while people read this page, so scans and step 2 open fast.
-  useEffect(() => { preloadFaceModels(); }, []);
+  const [consented, setConsented] = useState(false);
+  // Models download and warm up once someone shows they mean to scan (ticks the agreement),
+  // a moment after the tap so the page is never busy while it is still being read or tapped.
+  useEffect(() => {
+    if (!consented) return;
+    const timer = setTimeout(preloadFaceModels, 600);
+    return () => clearTimeout(timer);
+  }, [consented]);
   const { width, height } = useWindowDimensions();
   const { selectEvent } = app;
   useFocusEffect(useCallback(() => { selectEvent(id); }, [id, selectEvent]));
@@ -40,7 +46,6 @@ export function FaceRegistrationScreen() {
   const { directory, error: syncError } = useFaceDirectory(id);
   const templates = useMemo(() => directory?.templates ?? [], [directory?.templates]);
 
-  const [consented, setConsented] = useState(false);
   const [notice, setNotice] = useState<{ text: string; error?: boolean } | null>(null);
   const [sheet, setSheet] = useState<Sheet | null>(null);
   const [overlays, setOverlays] = useState<FaceOverlay[]>([]);
