@@ -115,6 +115,15 @@ export default function FaceCamera({ active, scopeId = 'live:camera', overlays, 
         // Download and warm the models while the camera starts, not after.
         const models = loadFaceEngine();
         models.catch(() => {});
+        if (device === 'glasses') {
+          // Glasses frames are decoded by this page and the first must land within 15
+          // seconds. Finish loading the models first, so a busy page cannot starve them
+          // and be mistaken for glasses that sent no video.
+          setStatus('Loading on-device face models…');
+          await models.catch(() => {});
+          if (!current() || !documentVisible()) return;
+          setStatus('Starting camera…');
+        }
         const acquired = device === 'glasses' ? await acquireGlassesStream(controller.signal)
           : await acquireLiveCameraStream(facing, scopeId, controller.signal);
         if (!current() || !documentVisible()) { acquired.release(); return; }

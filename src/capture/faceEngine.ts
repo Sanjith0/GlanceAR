@@ -5,6 +5,11 @@ import { detectFacesWith, farDescriptorsWith, type DetectedFace, type FaceApi } 
  * Browser-only, on-device face detection and 128-number descriptors (face-api.js,
  * MIT). Frames never leave this tab; only descriptors of opted-in scans are saved.
  * Loaded lazily so the rest of the app never downloads TensorFlow or the models.
+ *
+ * The models run on TensorFlow.js's WebAssembly backend. WebGL was measured locking
+ * the page for about 8 seconds in WebKit (the iPhone engine) while it compiled
+ * shaders on the first frame; WebAssembly's first frame took 0.2 seconds at the same
+ * steady speed, and both produce the same descriptors, so saved scans work with either.
  */
 export type { DetectedFace };
 
@@ -16,6 +21,15 @@ let ready: FaceApi | null = null;
 function modelBase(): string {
   return new URL('models/face-api/', window.location.href.split('#')[0]).href;
 }
+/** The WebAssembly binaries are committed under public/tfjs-wasm (see SOURCE.txt there). */
+function wasmBase(): string {
+  return new URL('tfjs-wasm/', window.location.href.split('#')[0]).href;
+}
+
+export type FaceBackend = 'wasm' | 'webgl' | 'cpu';
+let backend: FaceBackend | null = null;
+/** Which engine the models ended up on; null until they are loaded. */
+export const faceBackend = (): FaceBackend | null => backend;
 
 export function faceEngineSupported(): boolean {
   return typeof window !== 'undefined' && typeof navigator !== 'undefined'
@@ -30,9 +44,20 @@ export function loadFaceEngine(): Promise<FaceApi> {
     const faceapi = await import('@vladmandic/face-api');
     await breathe();
     // The bundled TensorFlow.js has these at runtime; face-api's typings omit them.
-    const tf = faceapi.tf as unknown as { setBackend(name: string): Promise<boolean>; ready(): Promise<void> };
-    const webgl = await tf.setBackend('webgl').catch(() => false);
-    if (!webgl) await tf.setBackend('cpu');
+    const tf = faceapi.tf as unknown as {
+      setBackend(name: string): Promise<boolean>; ready(): Promise<void>;
+      setWasmPaths(prefix: string): void; env(): { set(flag: string, value: unknown): void };
+    };
+    let chosen: FaceBackend = 'cpu';
+    try { tf.setWasmPaths(wasmBase()); } catch { /* falls through to WebGL below */ }
+    if (await tf.setBackend('wasm').catch(() => false)) chosen = 'wasm';
+    else {
+      // Fallback only. Shape uniforms let shaders be reused across sizes, which cut the
+      // measured first-frame stall from about 8 seconds to about 3.
+      try { tf.env().set('WEBGL_USE_SHAPES_UNIFORMS', true); } catch { /* older builds */ }
+      if (await tf.setBackend('webgl').catch(() => false)) chosen = 'webgl';
+      else await tf.setBackend('cpu');
+    }
     await tf.ready();
     await breathe();
     const base = modelBase();
@@ -41,9 +66,10 @@ export function loadFaceEngine(): Promise<FaceApi> {
       () => faceapi.nets.faceLandmark68Net.loadFromUri(base),
       () => faceapi.nets.faceRecognitionNet.loadFromUri(base),
     ]) { await load(); await breathe(); }
-    // The first WebGL run of each net compiles its shaders, which can take seconds on
-    // phones. Do it once on a blank canvas so the first real frame is fast.
-    if (webgl) await warmUp(faceapi).catch(() => {});
+    // The first run of each net is the slow one (on WebGL it compiles shaders). Do it
+    // once on a blank canvas so the first real frame is fast.
+    if (chosen !== 'cpu') await warmUp(faceapi).catch(() => {});
+    backend = chosen;
     ready = faceapi;
     return faceapi;
   })();
@@ -60,6 +86,9 @@ async function warmUp(faceapi: FaceApi): Promise<void> {
   await faceapi.nets.faceLandmark68Net.detectLandmarks(canvas);
   await breathe();
   await faceapi.nets.faceRecognitionNet.computeFaceDescriptor(canvas);
+  await breathe();
+  // The far-sighted pass uses its own input sizes; on WebGL each size compiles separately.
+  await detectFacesWith(faceapi, canvas, { far: true });
 }
 
 /** Start downloading and warming the models before any camera opens. Errors retry on open. */

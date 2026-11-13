@@ -1,0 +1,7 @@
+WebAssembly binaries for the TensorFlow.js WASM backend, version 4.22.0,
+copied unchanged from the npm package @tensorflow/tfjs-backend-wasm@4.22.0 (dist/).
+License: Apache-2.0, Copyright Google LLC.
+
+They must match the TensorFlow.js version bundled inside @vladmandic/face-api
+(tests/faceEngineAssets.test.ts checks this). LIVE Camera runs its face models on
+this backend so the page never stalls compiling WebGL shaders.

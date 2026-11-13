@@ -21,6 +21,13 @@ const TILE_SCORE = 0.4;
 const CROP_SIZE = 256;
 const CROP_MARGIN = 0.55;
 
+/**
+ * Hands the main thread back between stages. On the WebAssembly backend each model
+ * call runs to completion without yielding, so without these a whole frame would hold
+ * the page for 100 ms or more at a time and taps would feel sticky.
+ */
+const pause = () => new Promise<void>(resolve => setTimeout(resolve, 0));
+
 const tiny = (faceapi: FaceApi, inputSize: number, scoreThreshold: number) =>
   new faceapi.TinyFaceDetectorOptions({ inputSize, scoreThreshold });
 
@@ -71,6 +78,7 @@ async function findBoxes(faceapi: FaceApi, source: Source): Promise<{ box: FaceB
       const { x, y, width: w, height: h } = detection.box;
       found.push({ box: { x: x + tile.x, y: y + tile.y, width: w, height: h }, score: detection.score });
     }
+    await pause();
   }
   return dedupe(found);
 }
@@ -115,12 +123,19 @@ export async function detectFacesWith(faceapi: FaceApi, source: Source, options:
       };
     });
   }
+  // One still copy of the frame: the stages below yield to the page between them, and a
+  // live video would otherwise move on, leaving boxes from one moment on a later picture.
+  const { width, height } = sizeOf(source);
+  const still = canvas(width, height);
+  still.getContext('2d')?.drawImage(source, 0, 0, width, height);
   const out: DetectedFace[] = [];
-  for (const { box, score } of await findBoxes(faceapi, source)) {
+  for (const { box, score } of await findBoxes(faceapi, still)) {
     const face: DetectedFace = { box, score };
     if (box.width >= MIN_FAR_FACE_WIDTH) {
-      const descriptor = await describeCrop(faceapi, faceCrop(source, box)).catch(() => undefined);
+      const piece = faceCrop(still, box);
+      const descriptor = await describeCrop(faceapi, piece).catch(() => undefined);
       if (descriptor) face.descriptor = descriptor;
+      await pause();
     }
     out.push(face);
   }
